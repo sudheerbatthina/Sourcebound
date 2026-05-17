@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Clinical RAG</title>
+  <title>Fetch AI</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -1233,7 +1233,7 @@
   <!-- SIDEBAR -->
   <div id="sidebar">
     <div class="sidebar-top">
-      <span class="sidebar-brand">Clinical RAG</span>
+      <span class="sidebar-brand">Fetch AI</span>
       <div class="sidebar-icon-row">
         <button class="sidebar-icon-btn" id="open-docs-btn" title="Documents" onclick="openDocsPanel()">📁</button>
         <button class="sidebar-icon-btn" id="open-settings-btn" title="Settings" onclick="openSettingsPanel()">&#9881;&#65039;</button>
@@ -1301,8 +1301,8 @@
     </div>
 
     <div id="empty-state">
-      <h1>Clinical RAG</h1>
-      <div class="empty-subtitle">Ask questions about your clinical documents</div>
+      <h1>Fetch AI</h1>
+      <div class="empty-subtitle">Ask anything about your documents</div>
       <div class="suggestion-grid">
         <button class="suggestion-card" onclick="suggestionClick('What is a business associate under HIPAA?')">What is a business associate under HIPAA?</button>
         <button class="suggestion-card" onclick="suggestionClick('Summarize the HIPAA Privacy Rule')">Summarize the HIPAA Privacy Rule</button>
@@ -1327,7 +1327,7 @@
         <textarea id="question-input" rows="1" placeholder="Ask a question about your documents..."></textarea>
         <button id="send-btn" onclick="handleSendClick()">&#8593;</button>
       </div>
-      <div class="disclaimer">Clinical RAG can make mistakes. Verify important information.</div>
+      <div class="disclaimer">Fetch AI can make mistakes. Verify important information.</div>
     </div>
     <input type="file" id="chat-file-input" accept=".pdf" style="display:none;" onchange="handleChatFileUpload(this)" />
     <input type="file" id="kb-file-input" accept=".pdf" style="display:none;" onchange="handleKbFileUpload(this)" />
@@ -2108,7 +2108,7 @@
     headerEl.className = "bot-header";
     var labelSpan = document.createElement("span");
     labelSpan.className = "bot-label";
-    labelSpan.textContent = "CLINICAL RAG";
+    labelSpan.textContent = "FETCH AI";
     headerEl.appendChild(labelSpan);
     headerEl.appendChild(badgeEl);
 
@@ -2150,7 +2150,7 @@
 
     var headerEl = document.createElement("div");
     headerEl.className = "bot-header";
-    headerEl.innerHTML = '<span class="bot-label">CLINICAL RAG</span>' + badgeHtml;
+    headerEl.innerHTML = '<span class="bot-label">FETCH AI</span>' + badgeHtml;
 
     var contentEl = document.createElement("div");
     contentEl.className = "bot-content";

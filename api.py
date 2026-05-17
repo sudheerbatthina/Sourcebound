@@ -34,7 +34,7 @@ from rag_assistant.auth import verify_password, hash_password, create_token, dec
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Healthcare RAG Assistant")
+app = FastAPI(title="Fetch AI")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET", "fallback-dev-secret-only"),
