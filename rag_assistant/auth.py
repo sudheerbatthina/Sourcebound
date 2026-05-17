@@ -17,10 +17,18 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
-def create_token(user_id: str, username: str, role: str) -> str:
+def create_token(user_id: str, username: str, role: str,
+                 tenant_id: str = "default", display_name: str = "") -> str:
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     return jwt.encode(
-        {"sub": user_id, "username": username, "role": role, "exp": expire},
+        {
+            "sub": user_id,
+            "username": username,
+            "role": role,
+            "tenant_id": tenant_id,
+            "display_name": display_name,
+            "exp": expire,
+        },
         SECRET_KEY,
         algorithm=ALGORITHM,
     )

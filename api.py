@@ -1,4 +1,4 @@
-"""FastAPI service for the Healthcare RAG Assistant."""
+"""FastAPI service for the Fetch AI RAG Assistant."""
 
 import json
 import logging
@@ -17,7 +17,7 @@ from starlette.requests import Request
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from rag_assistant.generator import answer_question, stream_answer, build_context
-from rag_assistant.config import API_KEYS, CHROMA_DIR, COLLECTION_NAME, DATA_DIR, STORAGE_DIR
+from rag_assistant.config import API_KEYS, CHROMA_DIR, COLLECTION_NAME, DATA_DIR, STORAGE_DIR, get_collection_name
 from rag_assistant.cache import cache_backend
 from rag_assistant.db import (
     init_db, create_chat, list_chats, get_chat, delete_chat, delete_all_chats,
@@ -26,6 +26,8 @@ from rag_assistant.db import (
     create_user, get_user_by_username, get_user_by_email_or_username,
     get_user_by_id, update_last_login, update_user_display_name,
     update_user_password, list_users, get_analytics,
+    create_tenant, get_tenant, get_tenant_by_slug, list_tenant_users,
+    create_invite, get_invite_by_token, accept_invite, update_tenant_user_tenant,
 )
 from rag_assistant.retriever import retrieve
 from rag_assistant.query_rewriter import rewrite_query
@@ -44,9 +46,36 @@ app.add_middleware(
 # Startup
 # ---------------------------------------------------------------------------
 
+def _migrate_to_tenant():
+    """One-time migration: assign existing data to 'default' tenant."""
+    default = get_tenant_by_slug("default")
+    if not default:
+        default = create_tenant("Default Workspace", slug="default")
+        logger.info("Created default tenant: %s", default['id'])
+
+    tid = default['id']
+
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE users SET tenant_id=? WHERE tenant_id IS NULL",
+            (tid,)
+        )
+        conn.execute(
+            "UPDATE chats SET tenant_id=? WHERE tenant_id IS NULL",
+            (tid,)
+        )
+        conn.execute(
+            "UPDATE query_logs SET tenant_id=? WHERE tenant_id IS NULL",
+            (tid,)
+        )
+
+    logger.info("Migration: existing data assigned to default tenant '%s'", tid)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     init_db()
+    _migrate_to_tenant()
 
     try:
         deleted = purge_old_logs(days=7)
@@ -56,7 +85,9 @@ def _startup() -> None:
 
     try:
         from rag_assistant.vector_store import migrate_existing_chunks
-        migrate_existing_chunks()
+        default = get_tenant_by_slug("default")
+        tid = default['id'] if default else "default"
+        migrate_existing_chunks(tenant_id=tid)
     except Exception as exc:
         logger.warning("Chunk migration failed: %s", exc)
 
@@ -69,7 +100,9 @@ def _startup() -> None:
 
     try:
         if not get_user_by_username("admin"):
-            create_user("admin", "admin123", display_name="Administrator", role="admin")
+            default = get_tenant_by_slug("default")
+            tid = default['id'] if default else None
+            create_user("admin", "admin123", display_name="Administrator", role="admin", tenant_id=tid)
             logger.info("Created default admin user (admin/admin123)")
     except Exception as exc:
         logger.warning("Default admin user creation failed: %s", exc)
@@ -84,8 +117,11 @@ def _startup() -> None:
         pass
 
     try:
+        default = get_tenant_by_slug("default")
+        tid = default['id'] if default else "default"
+        col_name = get_collection_name(tid)
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=col_name)
         if collection.count() == 0:
             pdf_files = list(DATA_DIR.glob("*.pdf")) if DATA_DIR.exists() else []
             if pdf_files:
@@ -93,7 +129,7 @@ def _startup() -> None:
                 from rag_assistant.vector_store import index_all_pdfs
                 def _bg_index():
                     try:
-                        result = index_all_pdfs()
+                        result = index_all_pdfs(tenant_id=tid)
                         count = result.count() if result is not None else 0
                         logger.info("Auto-indexing complete: %d chunks indexed.", count)
                     except Exception as e:
@@ -106,13 +142,13 @@ def _startup() -> None:
                     "Call POST /upload to add PDFs or POST /chats/{id}/upload for per-chat docs."
                 )
         else:
-            logger.info("Vector store ready: %d chunks in '%s'.", collection.count(), COLLECTION_NAME)
+            logger.info("Vector store ready: %d chunks in '%s'.", collection.count(), col_name)
     except Exception as exc:
         logger.warning("Could not check vector store at startup: %s", exc)
 
 
 # ---------------------------------------------------------------------------
-# Auth
+# Auth helpers
 # ---------------------------------------------------------------------------
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -134,15 +170,32 @@ def _require_auth(
     api_key: str | None = Security(_api_key_header),
     authorization: str | None = Header(default=None),
 ) -> dict:
-    """Accept either X-API-Key or Bearer JWT."""
+    """Accept either X-API-Key or Bearer JWT. Returns normalized user dict."""
     if api_key and api_key in API_KEYS:
-        return {"user_id": "api", "username": "api", "role": "admin"}
+        default = get_tenant_by_slug("default")
+        tid = default['id'] if default else "default"
+        return {"user_id": "api", "username": "api", "role": "admin", "tenant_id": tid, "display_name": "API"}
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
         payload = decode_token(token)
         if payload:
-            return payload
+            return {
+                "user_id": payload.get("sub"),
+                "username": payload.get("username"),
+                "role": payload.get("role"),
+                "tenant_id": payload.get("tenant_id", "default"),
+                "display_name": payload.get("display_name", ""),
+            }
     raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid or missing credentials")
+
+
+def _get_tenant_id(user: dict) -> str:
+    return user.get("tenant_id") or "default"
+
+
+def _get_uid(user: dict) -> str | None:
+    uid = user.get("user_id")
+    return None if uid == "api" else uid
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +275,19 @@ class UpdatePasswordRequest(BaseModel):
     new_password: str
 
 
+class CreateOrgRequest(BaseModel):
+    org_name: str
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+
+
+class InviteRequest(BaseModel):
+    email: str
+    role: str = "member"
+
+
 # ---------------------------------------------------------------------------
 # Auth endpoints (public)
 # ---------------------------------------------------------------------------
@@ -236,27 +302,38 @@ def settings_page():
     return RedirectResponse(url="/settings.html")
 
 
+@app.get("/accept-invite")
+def accept_invite_page():
+    return RedirectResponse(url="/invite.html")
+
+
 @app.post("/auth/register")
 def auth_register(request: RegisterRequest):
-    # Auto-generate username from email
     base = request.email.split("@")[0].lower().replace(".", "_")
     suffix = str(random.randint(1000, 9999))
     username = f"{base}{suffix}"
     try:
+        # Register without tenant — onboarding step 2 assigns tenant
         user = create_user(
             username=username,
             password=request.password,
             display_name=request.display_name,
             email=request.email,
             role="member",
+            tenant_id=None,
         )
-        token = create_token(user["id"], user["username"], user["role"])
+        # No tenant_id yet — frontend will show org creation step
+        token = create_token(
+            user["id"], user["username"], user["role"],
+            tenant_id="", display_name=request.display_name
+        )
         return {
             "token": token,
             "user_id": user["id"],
             "username": user["username"],
             "display_name": user["display_name"],
             "role": user["role"],
+            "tenant_id": None,
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -270,7 +347,18 @@ def auth_login(request: LoginRequest):
     if not user or not verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     update_last_login(user["id"])
-    token = create_token(user["id"], user["username"], user["role"])
+    tenant_id = user.get("tenant_id") or ""
+    token = create_token(
+        user["id"], user["username"], user["role"],
+        tenant_id=tenant_id,
+        display_name=user.get("display_name") or user["username"],
+    )
+    # Enrich with tenant name
+    tenant_name = None
+    if tenant_id:
+        t = get_tenant(tenant_id)
+        if t:
+            tenant_name = t["name"]
     return {
         "token": token,
         "username": user["username"],
@@ -278,26 +366,106 @@ def auth_login(request: LoginRequest):
         "role": user["role"],
         "user_id": user["id"],
         "email": user.get("email"),
+        "tenant_id": tenant_id,
+        "tenant_name": tenant_name,
     }
 
 
 @app.get("/auth/me")
 def auth_me(user: dict = Depends(_require_auth)):
-    payload = {k: v for k, v in user.items() if k != "exp"}
-    # Enrich with display_name from DB if we have a real user_id
-    uid = user.get("sub") or user.get("user_id")
-    if uid and uid != "api":
+    uid = _get_uid(user)
+    result = {k: v for k, v in user.items()}
+    if uid:
         db_user = get_user_by_id(uid)
         if db_user:
-            payload["display_name"] = db_user.get("display_name") or db_user["username"]
-            payload["email"] = db_user.get("email")
-    return payload
+            result["display_name"] = db_user.get("display_name") or db_user["username"]
+            result["email"] = db_user.get("email")
+            result["tenant_id"] = db_user.get("tenant_id") or user.get("tenant_id")
+    tenant_id = result.get("tenant_id")
+    if tenant_id:
+        t = get_tenant(tenant_id)
+        result["tenant_name"] = t["name"] if t else None
+    return result
+
+
+@app.post("/auth/create-org")
+def auth_create_org(request: CreateOrgRequest, user: dict = Depends(_require_auth)):
+    uid = _get_uid(user)
+    if not uid:
+        raise HTTPException(status_code=400, detail="Requires JWT login")
+    try:
+        tenant = create_tenant(request.org_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # Assign user as admin of new tenant
+    update_tenant_user_tenant(uid, tenant["id"], role="admin")
+
+    db_user = get_user_by_id(uid)
+    display_name = db_user.get("display_name") or db_user["username"] if db_user else ""
+    token = create_token(
+        uid, user["username"], "admin",
+        tenant_id=tenant["id"],
+        display_name=display_name,
+    )
+    return {
+        "token": token,
+        "tenant_id": tenant["id"],
+        "tenant_name": tenant["name"],
+        "tenant_slug": tenant["slug"],
+        "role": "admin",
+    }
+
+
+@app.get("/auth/invite/{token}")
+def get_invite_info(token: str):
+    invite = get_invite_by_token(token)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found or expired")
+    from datetime import datetime
+    if invite["expires_at"] < datetime.utcnow().isoformat():
+        raise HTTPException(status_code=410, detail="Invite has expired")
+    if invite.get("accepted_at"):
+        raise HTTPException(status_code=409, detail="Invite already accepted")
+    tenant = get_tenant(invite["tenant_id"])
+    return {
+        "email": invite["email"],
+        "role": invite["role"],
+        "org_name": tenant["name"] if tenant else "Unknown",
+        "expires_at": invite["expires_at"],
+    }
+
+
+@app.post("/auth/accept-invite")
+def auth_accept_invite(request: AcceptInviteRequest, user: dict = Depends(_require_auth)):
+    uid = _get_uid(user)
+    if not uid:
+        raise HTTPException(status_code=400, detail="Requires JWT login")
+    invite = get_invite_by_token(request.token)
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite not found")
+    ok = accept_invite(request.token, uid)
+    if not ok:
+        raise HTTPException(status_code=400, detail="Invite expired or already accepted")
+    tenant = get_tenant(invite["tenant_id"])
+    db_user = get_user_by_id(uid)
+    display_name = db_user.get("display_name") or db_user["username"] if db_user else ""
+    token = create_token(
+        uid, user["username"], invite["role"],
+        tenant_id=invite["tenant_id"],
+        display_name=display_name,
+    )
+    return {
+        "token": token,
+        "tenant_name": tenant["name"] if tenant else None,
+        "role": invite["role"],
+    }
 
 
 @app.put("/auth/profile")
 def auth_update_profile(request: UpdateProfileRequest, user: dict = Depends(_require_auth)):
-    uid = user.get("sub") or user.get("user_id")
-    if not uid or uid == "api":
+    uid = _get_uid(user)
+    if not uid:
         raise HTTPException(status_code=400, detail="Profile update requires JWT login")
     update_user_display_name(uid, request.display_name)
     db_user = get_user_by_id(uid)
@@ -306,8 +474,8 @@ def auth_update_profile(request: UpdateProfileRequest, user: dict = Depends(_req
 
 @app.put("/auth/password")
 def auth_update_password(request: UpdatePasswordRequest, user: dict = Depends(_require_auth)):
-    uid = user.get("sub") or user.get("user_id")
-    if not uid or uid == "api":
+    uid = _get_uid(user)
+    if not uid:
         raise HTTPException(status_code=400, detail="Password update requires JWT login")
     db_user = get_user_by_id(uid)
     if not db_user:
@@ -324,14 +492,16 @@ def auth_update_password(request: UpdatePasswordRequest, user: dict = Depends(_r
 
 @app.get("/chats", dependencies=[Depends(_require_auth)])
 def get_chats_list(user: dict = Depends(_require_auth)):
-    uid = user.get("sub") or user.get("user_id")
-    return list_chats(user_id=uid if uid != "api" else None)
+    uid = _get_uid(user)
+    tid = _get_tenant_id(user)
+    return list_chats(user_id=uid, tenant_id=tid if tid else None)
 
 
 @app.post("/chats")
 def new_chat(user: dict = Depends(_require_auth)):
-    uid = user.get("sub") or user.get("user_id")
-    return create_chat(user_id=uid if uid != "api" else None)
+    uid = _get_uid(user)
+    tid = _get_tenant_id(user)
+    return create_chat(user_id=uid, tenant_id=tid if tid else None)
 
 
 @app.get("/chats/{chat_id}", dependencies=[Depends(_require_auth)])
@@ -344,10 +514,12 @@ def get_chat_detail(chat_id: str):
 
 @app.delete("/chats/all")
 def delete_all_user_chats(user: dict = Depends(_require_auth)):
-    uid = user.get("sub") or user.get("user_id")
-    if not uid or uid == "api":
+    uid = _get_uid(user)
+    if not uid:
         raise HTTPException(status_code=400, detail="Requires JWT login")
-    # Gather chat ids before deleting so we can remove vectors
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
+
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT id FROM chats WHERE user_id=? OR user_id IS NULL", (uid,)
@@ -357,7 +529,7 @@ def delete_all_user_chats(user: dict = Depends(_require_auth)):
     deleted_chunks = 0
     try:
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = chroma_client.get_or_create_collection(name=col_name)
         for cid in chat_ids:
             res = collection.get(where={"session_id": {"$eq": cid}}, include=[])
             if res["ids"]:
@@ -371,14 +543,15 @@ def delete_all_user_chats(user: dict = Depends(_require_auth)):
 
 
 @app.delete("/chats/{chat_id}", dependencies=[Depends(_require_auth)])
-def remove_chat(chat_id: str):
+def remove_chat(chat_id: str, user: dict = Depends(_require_auth)):
     if not get_chat(chat_id):
         raise HTTPException(status_code=404, detail="Chat not found")
+    tid = _get_tenant_id(user)
     delete_chat(chat_id)
     def _bg_delete():
         try:
             from rag_assistant.vector_store import delete_session_chunks
-            delete_session_chunks(chat_id)
+            delete_session_chunks(chat_id, tenant_id=tid)
         except Exception as e:
             logger.error("Failed to delete session chunks for %s: %s", chat_id, e)
     threading.Thread(target=_bg_delete, daemon=True).start()
@@ -386,12 +559,14 @@ def remove_chat(chat_id: str):
 
 
 @app.post("/chats/{chat_id}/upload", dependencies=[Depends(_require_auth)])
-async def upload_to_chat(chat_id: str, file: UploadFile = File(...)):
+async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
+                         user: dict = Depends(_require_auth)):
     if not get_chat(chat_id):
         raise HTTPException(status_code=404, detail="Chat not found")
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
+    tid = _get_tenant_id(user)
     session_dir = STORAGE_DIR / "sessions" / chat_id
     session_dir.mkdir(parents=True, exist_ok=True)
     dest = session_dir / file.filename
@@ -406,7 +581,7 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...)):
     def _bg_index():
         try:
             from rag_assistant.vector_store import index_pdf_for_session
-            index_pdf_for_session(dest, session_id=chat_id)
+            index_pdf_for_session(dest, session_id=chat_id, tenant_id=tid)
             logger.info("Session upload indexed: %s for chat %s", filename, chat_id)
             _fire_webhook("document_indexed", filename, None, chat_id)
         except Exception as e:
@@ -416,12 +591,14 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...)):
 
 
 @app.get("/chats/{chat_id}/documents", dependencies=[Depends(_require_auth)])
-def get_chat_documents(chat_id: str):
+def get_chat_documents(chat_id: str, user: dict = Depends(_require_auth)):
     if not get_chat(chat_id):
         raise HTTPException(status_code=404, detail="Chat not found")
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=col_name)
         results = collection.get(
             where={"session_id": {"$eq": chat_id}},
             include=["metadatas"],
@@ -440,10 +617,11 @@ def get_chat_documents(chat_id: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/index", dependencies=[Depends(_require_auth)])
-def index():
+def index(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
     try:
         from rag_assistant.vector_store import index_all_pdfs
-        result = index_all_pdfs()
+        result = index_all_pdfs(tenant_id=tid)
         count = result.count() if result is not None else 0
         return {"status": "complete", "chunks": count}
     except Exception as exc:
@@ -458,6 +636,7 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(_require_aut
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
+    tid = _get_tenant_id(user)
     dest = DATA_DIR / file.filename
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -471,7 +650,7 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(_require_aut
     def _bg_index():
         try:
             from rag_assistant.vector_store import index_single_pdf
-            collection = index_single_pdf(dest)
+            collection = index_single_pdf(dest, tenant_id=tid)
             count = collection.count() if collection is not None else 0
             logger.info("Background upload index complete: %d chunks", count)
             _fire_webhook("document_indexed", filename, count, "global")
@@ -487,10 +666,11 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(_require_aut
 
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest, user: dict = Depends(_require_auth)):
+    uid = _get_uid(user)
+    tid = _get_tenant_id(user)
     active_chat_id = request.chat_id
     if active_chat_id == "new":
-        uid = user.get("sub") or user.get("user_id")
-        chat = create_chat(user_id=uid if uid != "api" else None)
+        chat = create_chat(user_id=uid, tenant_id=tid if tid else None)
         active_chat_id = chat["id"]
 
     session_id = active_chat_id if active_chat_id else "global"
@@ -503,6 +683,7 @@ def query(request: QueryRequest, user: dict = Depends(_require_auth)):
             user_group=request.user_group,
             session_id=session_id,
             answer_style=request.answer_style,
+            tenant_id=tid,
         )
         if active_chat_id:
             add_message(active_chat_id, "user", request.question)
@@ -526,7 +707,7 @@ def suggest_followups(request: SuggestFollowupsRequest):
                     "role": "system",
                     "content": (
                         "Generate exactly 3 short follow-up questions a user might ask "
-                        "after receiving this answer about clinical/healthcare documents. "
+                        "after receiving this answer about documents. "
                         "Return ONLY a JSON array of 3 strings, nothing else."
                     ),
                 },
@@ -549,10 +730,11 @@ def suggest_followups(request: SuggestFollowupsRequest):
 
 @app.post("/query/stream")
 async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth)):
+    uid = _get_uid(user)
+    tid = _get_tenant_id(user)
     active_chat_id = request.chat_id
     if active_chat_id == "new":
-        uid = user.get("sub") or user.get("user_id")
-        chat = create_chat(user_id=uid if uid != "api" else None)
+        chat = create_chat(user_id=uid, tenant_id=tid if tid else None)
         active_chat_id = chat["id"]
 
     session_id = active_chat_id if active_chat_id else "global"
@@ -572,6 +754,7 @@ async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth
             history=history,
             mode=request.mode,
             answer_style=request.answer_style,
+            tenant_id=tid,
         ):
             try:
                 raw = chunk.removeprefix("data: ").strip()
@@ -632,10 +815,12 @@ def submit_feedback(request: FeedbackRequest):
 # ---------------------------------------------------------------------------
 
 @app.get("/admin/documents", dependencies=[Depends(_require_auth)])
-def list_global_documents():
+def list_global_documents(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=col_name)
         if collection.count() == 0:
             return []
         results = collection.get(
@@ -652,11 +837,12 @@ def list_global_documents():
 
 
 @app.get("/documents")
-def documents():
-    """Public — no auth required."""
+def documents(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=col_name)
         if collection.count() == 0:
             return []
         results = collection.get(
@@ -673,10 +859,12 @@ def documents():
 
 
 @app.get("/admin/stats", dependencies=[Depends(_require_auth)])
-def admin_stats():
+def admin_stats(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = chroma_client.get_or_create_collection(name=col_name)
         total_chunks = collection.count()
 
         global_results = collection.get(
@@ -709,10 +897,12 @@ def admin_stats():
 
 
 @app.delete("/admin/documents", dependencies=[Depends(_require_auth)])
-def delete_global_document_by_param(filename: str = Query(...)):
+def delete_global_document_by_param(filename: str = Query(...), user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = chroma_client.get_or_create_collection(name=col_name)
         results = collection.get(where={"source": {"$eq": filename}}, include=[])
         if not results["ids"]:
             raise HTTPException(status_code=404, detail=f"{filename} not found")
@@ -725,13 +915,14 @@ def delete_global_document_by_param(filename: str = Query(...)):
 
 
 @app.post("/admin/reindex", dependencies=[Depends(_require_auth)])
-def admin_reindex():
+def admin_reindex(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
     pdf_files = list(DATA_DIR.glob("*.pdf")) if DATA_DIR.exists() else []
     filenames = [f.name for f in pdf_files]
     def _bg():
         try:
             from rag_assistant.vector_store import index_all_pdfs
-            result = index_all_pdfs()
+            result = index_all_pdfs(tenant_id=tid)
             count = result.count() if result is not None else 0
             logger.info("Admin reindex complete: %d chunks", count)
         except Exception as e:
@@ -741,10 +932,11 @@ def admin_reindex():
 
 
 @app.post("/admin/query-debug", dependencies=[Depends(_require_auth)])
-def admin_query_debug(request: QueryDebugRequest):
+def admin_query_debug(request: QueryDebugRequest, user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
     try:
         rewritten = rewrite_query(request.question)
-        hits = retrieve(rewritten, top_k=request.top_k, session_id=request.session_id)
+        hits = retrieve(rewritten, top_k=request.top_k, session_id=request.session_id, tenant_id=tid)
         context = build_context(hits)
         return {
             "original_question": request.question,
@@ -768,7 +960,9 @@ def admin_query_debug(request: QueryDebugRequest):
 
 
 @app.get("/admin/sessions", dependencies=[Depends(_require_auth)])
-def admin_sessions():
+def admin_sessions(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         with get_conn() as conn:
             rows = conn.execute("""
@@ -782,7 +976,7 @@ def admin_sessions():
         chats = [dict(r) for r in rows]
 
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = chroma_client.get_or_create_collection(name=col_name)
         for chat in chats:
             try:
                 res = collection.get(
@@ -800,13 +994,15 @@ def admin_sessions():
 
 
 @app.delete("/admin/sessions/{chat_id}", dependencies=[Depends(_require_auth)])
-def admin_delete_session(chat_id: str):
+def admin_delete_session(chat_id: str, user: dict = Depends(_require_auth)):
     if not get_chat(chat_id):
         raise HTTPException(status_code=404, detail="Chat not found")
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     chunks_removed = 0
     try:
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = chroma_client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = chroma_client.get_or_create_collection(name=col_name)
         res = collection.get(where={"session_id": {"$eq": chat_id}}, include=[])
         if res["ids"]:
             collection.delete(ids=res["ids"])
@@ -818,10 +1014,12 @@ def admin_delete_session(chat_id: str):
 
 
 @app.delete("/admin/documents/{filename}", dependencies=[Depends(_require_auth)])
-def delete_global_document(filename: str):
+def delete_global_document(filename: str, user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    col_name = get_collection_name(tid)
     try:
         client = chromadb.PersistentClient(path=CHROMA_DIR)
-        collection = client.get_or_create_collection(name=COLLECTION_NAME)
+        collection = client.get_or_create_collection(name=col_name)
         results = collection.get(where={"source": {"$eq": filename}}, include=[])
         if not results["ids"]:
             raise HTTPException(status_code=404, detail=f"{filename} not found")
@@ -876,9 +1074,10 @@ def admin_feedback():
 
 
 @app.get("/admin/analytics", dependencies=[Depends(_require_auth)])
-def admin_analytics():
+def admin_analytics(user: dict = Depends(_require_auth)):
     try:
-        return get_analytics()
+        tid = _get_tenant_id(user)
+        return get_analytics(tenant_id=tid if tid else None)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -897,14 +1096,58 @@ def admin_users(user: dict = Depends(_require_auth)):
 def admin_create_user(request: CreateUserRequest, user: dict = Depends(_require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
+    tid = _get_tenant_id(user)
     try:
         return create_user(
             request.username, request.password,
             display_name=request.display_name,
-            email=request.email, role=request.role,
+            email=request.email,
+            role=request.role,
+            tenant_id=tid if tid else None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/invites")
+def admin_send_invite(request: InviteRequest, user: dict = Depends(_require_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    uid = _get_uid(user)
+    tid = _get_tenant_id(user)
+    if not tid or tid == "default":
+        raise HTTPException(status_code=400, detail="No tenant configured")
+    try:
+        invite = create_invite(
+            tenant_id=tid,
+            email=request.email,
+            role=request.role,
+            invited_by=uid or "admin",
+        )
+        # In production, send email. For now, return the invite link.
+        base_url = os.environ.get("APP_BASE_URL", "http://localhost:8000")
+        invite_link = f"{base_url}/accept-invite?token={invite['token']}"
+        return {
+            "invite_link": invite_link,
+            "token": invite["token"],
+            "email": invite["email"],
+            "expires_at": invite["expires_at"],
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/team")
+def admin_team(user: dict = Depends(_require_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    tid = _get_tenant_id(user)
+    if not tid:
+        raise HTTPException(status_code=400, detail="No tenant configured")
+    try:
+        return list_tenant_users(tid)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -915,7 +1158,7 @@ def health():
 
 
 # ---------------------------------------------------------------------------
-# Google OAuth (stubs, activated when env vars are set)
+# Google OAuth
 # ---------------------------------------------------------------------------
 
 @app.get("/auth/google")
@@ -929,7 +1172,7 @@ async def google_auth_start(request: Request):
         return await oauth.google.authorize_redirect(request, redirect_uri)
     except Exception as exc:
         logger.error("Google OAuth redirect error: %s", exc)
-        return {"error": "Google OAuth redirect failed. Ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are valid.", "detail": str(exc)}
+        return {"error": "Google OAuth redirect failed.", "detail": str(exc)}
 
 
 @app.get("/auth/google/callback", name="google_auth_callback")
@@ -944,20 +1187,24 @@ async def google_auth_callback(request: Request):
         name = user_info.get("name", email)
         if not email:
             return RedirectResponse(url="/login?error=oauth_no_email")
-        # Find or create user
         db_user = get_user_by_email_or_username(email)
         if not db_user:
-            import secrets
+            import secrets as _secrets
             db_user = create_user(
                 username=email.split("@")[0] + str(random.randint(1000, 9999)),
-                password=secrets.token_hex(32),
+                password=_secrets.token_hex(32),
                 display_name=name,
                 email=email,
                 role="member",
             )
             db_user = get_user_by_email_or_username(email)
         update_last_login(db_user["id"])
-        jwt_token = create_token(db_user["id"], db_user["username"], db_user["role"])
+        tenant_id = db_user.get("tenant_id") or ""
+        jwt_token = create_token(
+            db_user["id"], db_user["username"], db_user["role"],
+            tenant_id=tenant_id,
+            display_name=db_user.get("display_name") or db_user["username"],
+        )
         return RedirectResponse(url=f"/#token={jwt_token}")
     except Exception as exc:
         logger.error("Google OAuth callback error: %s", exc)
@@ -969,7 +1216,7 @@ async def google_auth_callback(request: Request):
 # ---------------------------------------------------------------------------
 
 def _fire_webhook(event: str, filename: str, chunks: int | None, session_id: str):
-    import os, requests as req_lib
+    import requests as req_lib
     webhook_url = os.environ.get("WEBHOOK_URL", "")
     if not webhook_url:
         return

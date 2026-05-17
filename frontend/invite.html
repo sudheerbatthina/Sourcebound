@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fetch AI — Accept Invite</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      background: #0f0f10;
+      color: #f4f4f5;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      width: 400px;
+      background: #18181b;
+      border: 1px solid #2a2a2e;
+      border-radius: 16px;
+      padding: 36px 32px;
+    }
+
+    .logo {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .logo-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #f4f4f5;
+      margin-bottom: 4px;
+    }
+
+    .logo-sub {
+      font-size: 13px;
+      color: #71717a;
+    }
+
+    .invite-banner {
+      background: rgba(99,102,241,0.08);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .invite-banner .org-label {
+      font-size: 11px;
+      color: #71717a;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+
+    .invite-banner .org-name {
+      font-size: 18px;
+      font-weight: 700;
+      color: #f4f4f5;
+      margin-bottom: 6px;
+    }
+
+    .invite-banner .invite-role {
+      font-size: 12px;
+      color: #818cf8;
+    }
+
+    .form-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #f4f4f5;
+      margin-bottom: 16px;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #a1a1aa;
+      margin-bottom: 5px;
+    }
+
+    .field input {
+      width: 100%;
+      padding: 9px 12px;
+      background: #0f0f10;
+      border: 1px solid #3f3f46;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      color: #f4f4f5;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .field input:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+    }
+
+    .field input::placeholder { color: #52525b; }
+
+    .submit-btn {
+      width: 100%;
+      padding: 10px;
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.15s;
+      margin-top: 4px;
+    }
+
+    .submit-btn:hover { background: #818cf8; }
+    .submit-btn:disabled { background: #3f3f46; cursor: not-allowed; }
+
+    .toggle-link {
+      text-align: center;
+      margin-top: 14px;
+      font-size: 13px;
+      color: #71717a;
+    }
+
+    .toggle-link a {
+      color: #818cf8;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .toggle-link a:hover { text-decoration: underline; }
+
+    .error-msg {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      color: #fca5a5;
+      margin-bottom: 14px;
+      display: none;
+    }
+
+    .error-msg.visible { display: block; }
+
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 18px 0;
+    }
+
+    .divider-line { flex: 1; height: 1px; background: #2a2a2e; }
+    .divider-text { font-size: 12px; color: #52525b; }
+
+    #loading { text-align: center; color: #71717a; font-size: 14px; padding: 20px 0; }
+    #expired-state { text-align: center; padding: 10px 0; }
+    .expired-icon { font-size: 32px; margin-bottom: 8px; }
+    .expired-msg { font-size: 15px; font-weight: 600; color: #fca5a5; margin-bottom: 6px; }
+    .expired-sub { font-size: 13px; color: #71717a; }
+
+    #action-panel { display: none; }
+    #signin-form { display: none; }
+    #signup-form { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">
+    <div class="logo-title">Fetch AI</div>
+    <div class="logo-sub">Your intelligent knowledge assistant</div>
+  </div>
+
+  <div id="loading">Loading invite...</div>
+
+  <div id="expired-state" style="display:none;">
+    <div class="expired-icon">⏰</div>
+    <div class="expired-msg">Invite Expired or Invalid</div>
+    <div class="expired-sub">This invite link is no longer valid. Ask your team admin to send a new one.</div>
+    <div class="toggle-link" style="margin-top:16px;">
+      <a href="/login">Go to Sign In</a>
+    </div>
+  </div>
+
+  <div id="action-panel">
+    <div class="invite-banner">
+      <div class="org-label">You're invited to join</div>
+      <div class="org-name" id="invite-org-name"></div>
+      <div class="invite-role">as <span id="invite-role-text"></span></div>
+    </div>
+
+    <div class="error-msg" id="invite-error"></div>
+
+    <!-- Signed-in user can accept directly -->
+    <div id="accept-direct" style="display:none;">
+      <div class="form-title">Accept invite as <span id="current-user-name"></span></div>
+      <button class="submit-btn" id="accept-direct-btn" onclick="doAcceptDirect()">
+        Join <span id="join-org-label"></span>
+      </button>
+      <div class="toggle-link">
+        Not you? <a onclick="showSignin()">Sign in with a different account</a>
+      </div>
+    </div>
+
+    <!-- Sign in to accept -->
+    <div id="signin-form">
+      <div class="form-title">Sign in to accept this invite</div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="si-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="si-password" placeholder="Enter password" autocomplete="current-password" />
+      </div>
+      <button class="submit-btn" id="si-btn" onclick="doSigninAccept()">Sign In &amp; Accept Invite</button>
+      <div class="toggle-link">
+        New to Fetch AI? <a onclick="showSignup()">Create an account</a>
+      </div>
+    </div>
+
+    <!-- Create account to accept -->
+    <div id="signup-form">
+      <div class="form-title">Create an account to accept</div>
+      <div class="field">
+        <label>Full Name</label>
+        <input type="text" id="su-name" placeholder="Your name" autocomplete="name" />
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="email" id="su-email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="su-password" placeholder="Create a password" autocomplete="new-password" />
+      </div>
+      <div class="field">
+        <label>Confirm Password</label>
+        <input type="password" id="su-confirm" placeholder="Repeat password" autocomplete="new-password" />
+      </div>
+      <button class="submit-btn" id="su-btn" onclick="doSignupAccept()">Create Account &amp; Accept Invite</button>
+      <div class="toggle-link">
+        Already have an account? <a onclick="showSignin()">Sign in instead</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var BASE = window.location.origin;
+  var inviteToken = new URLSearchParams(window.location.search).get("token") || "";
+  var inviteInfo = null;
+
+  async function loadInvite() {
+    if (!inviteToken) {
+      showExpired();
+      return;
+    }
+    try {
+      var res = await fetch(BASE + "/auth/invite/" + encodeURIComponent(inviteToken));
+      if (!res.ok) {
+        showExpired();
+        return;
+      }
+      inviteInfo = await res.json();
+      document.getElementById("invite-org-name").textContent = inviteInfo.org_name;
+      document.getElementById("invite-role-text").textContent = inviteInfo.role;
+      document.getElementById("join-org-label").textContent = inviteInfo.org_name;
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("action-panel").style.display = "block";
+
+      // If already logged in, offer direct accept
+      var existingToken = localStorage.getItem("crag_token");
+      var existingUser = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      if (existingToken && existingUser.username) {
+        document.getElementById("current-user-name").textContent =
+          existingUser.display_name || existingUser.username;
+        document.getElementById("accept-direct").style.display = "block";
+      } else {
+        showSignin();
+      }
+    } catch(e) {
+      showExpired();
+    }
+  }
+
+  function showExpired() {
+    document.getElementById("loading").style.display = "none";
+    document.getElementById("action-panel").style.display = "none";
+    document.getElementById("expired-state").style.display = "block";
+  }
+
+  function showSignin() {
+    document.getElementById("accept-direct").style.display = "none";
+    document.getElementById("signin-form").style.display = "block";
+    document.getElementById("signup-form").style.display = "none";
+    clearError();
+  }
+
+  function showSignup() {
+    document.getElementById("accept-direct").style.display = "none";
+    document.getElementById("signin-form").style.display = "none";
+    document.getElementById("signup-form").style.display = "block";
+    clearError();
+  }
+
+  function clearError() {
+    var el = document.getElementById("invite-error");
+    el.classList.remove("visible");
+    el.textContent = "";
+  }
+
+  function showError(msg) {
+    var el = document.getElementById("invite-error");
+    el.textContent = msg;
+    el.classList.add("visible");
+  }
+
+  async function _acceptInvite(authToken) {
+    var res = await fetch(BASE + "/auth/accept-invite", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + authToken },
+      body: JSON.stringify({ token: inviteToken }),
+    });
+    return res;
+  }
+
+  async function _storeAndRedirect(loginData, acceptData) {
+    localStorage.setItem("crag_token", acceptData.token);
+    var user = {
+      username: loginData.username,
+      display_name: loginData.display_name || loginData.username,
+      role: acceptData.role,
+      user_id: loginData.user_id,
+      email: loginData.email || null,
+      tenant_id: null,
+      tenant_name: acceptData.tenant_name,
+    };
+    localStorage.setItem("crag_user", JSON.stringify(user));
+    window.location.replace("/");
+  }
+
+  async function doAcceptDirect() {
+    clearError();
+    var btn = document.getElementById("accept-direct-btn");
+    btn.disabled = true;
+    btn.textContent = "Joining...";
+    try {
+      var authToken = localStorage.getItem("crag_token");
+      var res = await _acceptInvite(authToken);
+      var data = await res.json();
+      if (!res.ok) {
+        showError(data.detail || "Failed to accept invite.");
+        return;
+      }
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      user.role = data.role;
+      user.tenant_name = data.tenant_name;
+      localStorage.setItem("crag_token", data.token);
+      localStorage.setItem("crag_user", JSON.stringify(user));
+      window.location.replace("/");
+    } catch(e) {
+      showError("Network error. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Join " + (inviteInfo ? inviteInfo.org_name : "Workspace");
+    }
+  }
+
+  async function doSigninAccept() {
+    clearError();
+    var email = document.getElementById("si-email").value.trim();
+    var password = document.getElementById("si-password").value;
+    if (!email || !password) { showError("Please enter email and password."); return; }
+    var btn = document.getElementById("si-btn");
+    btn.disabled = true;
+    btn.textContent = "Signing in...";
+    try {
+      var loginRes = await fetch(BASE + "/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email, password: password }),
+      });
+      var loginData = await loginRes.json();
+      if (!loginRes.ok) { showError(loginData.detail || "Login failed."); return; }
+
+      var acceptRes = await _acceptInvite(loginData.token);
+      var acceptData = await acceptRes.json();
+      if (!acceptRes.ok) { showError(acceptData.detail || "Failed to accept invite."); return; }
+
+      await _storeAndRedirect(loginData, acceptData);
+    } catch(e) {
+      showError("Network error. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Sign In & Accept Invite";
+    }
+  }
+
+  async function doSignupAccept() {
+    clearError();
+    var name = document.getElementById("su-name").value.trim();
+    var email = document.getElementById("su-email").value.trim();
+    var password = document.getElementById("su-password").value;
+    var confirm = document.getElementById("su-confirm").value;
+    if (!name || !email || !password) { showError("Name, email, and password are required."); return; }
+    if (password !== confirm) { showError("Passwords do not match."); return; }
+    var btn = document.getElementById("su-btn");
+    btn.disabled = true;
+    btn.textContent = "Creating account...";
+    try {
+      var regRes = await fetch(BASE + "/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: name, email: email, password: password }),
+      });
+      var regData = await regRes.json();
+      if (!regRes.ok) { showError(regData.detail || "Registration failed."); return; }
+
+      var acceptRes = await _acceptInvite(regData.token);
+      var acceptData = await acceptRes.json();
+      if (!acceptRes.ok) { showError(acceptData.detail || "Failed to accept invite."); return; }
+
+      await _storeAndRedirect(
+        { username: regData.username, display_name: regData.display_name, user_id: regData.user_id, email: email },
+        acceptData
+      );
+    } catch(e) {
+      showError("Network error. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Create Account & Accept Invite";
+    }
+  }
+
+  loadInvite();
+</script>
+</body>
+</html>

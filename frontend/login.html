@@ -50,6 +50,12 @@
       font-size: 16px;
       font-weight: 600;
       color: #f4f4f5;
+      margin-bottom: 6px;
+    }
+
+    .form-sub {
+      font-size: 13px;
+      color: #71717a;
       margin-bottom: 20px;
     }
 
@@ -171,12 +177,42 @@
     .google-btn:hover { background: #27272a; border-color: #52525b; }
     .google-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-    .google-icon {
-      width: 18px;
-      height: 18px;
+    .google-icon { width: 18px; height: 18px; }
+
+    /* Invite code toggle */
+    .invite-toggle {
+      text-align: center;
+      margin-top: 14px;
+      font-size: 13px;
+      color: #71717a;
+    }
+
+    .invite-toggle a {
+      color: #818cf8;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .invite-toggle a:hover { text-decoration: underline; }
+
+    #invite-code-section { display: none; margin-top: 14px; }
+
+    .step-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #6366f1;
+      background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 20px;
+      padding: 3px 10px;
+      margin-bottom: 14px;
     }
 
     #register-form { display: none; }
+    #onboarding-form { display: none; }
   </style>
 </head>
 <body>
@@ -260,33 +296,83 @@
       Continue with Google
     </button>
   </div>
+
+  <!-- ONBOARDING STEP 2: SET UP WORKSPACE -->
+  <div id="onboarding-form">
+    <div class="step-badge">Step 2 of 2</div>
+    <div class="form-title">Set up your workspace</div>
+    <div class="form-sub">Create a workspace for your team or join an existing one.</div>
+    <div class="error-msg" id="onboarding-error"></div>
+
+    <div class="field">
+      <label for="org-name">Workspace Name</label>
+      <input type="text" id="org-name" placeholder="Acme Corp" autocomplete="organization" />
+    </div>
+    <button class="submit-btn" id="create-org-btn" onclick="doCreateOrg()">Create Workspace</button>
+
+    <div class="divider">
+      <div class="divider-line"></div>
+      <span class="divider-text">or</span>
+      <div class="divider-line"></div>
+    </div>
+
+    <div class="invite-toggle">
+      Have an invite code?
+      <a onclick="toggleInviteCode()">Enter it here</a>
+    </div>
+
+    <div id="invite-code-section">
+      <div class="field" style="margin-top:12px;">
+        <label for="invite-token">Invite Code</label>
+        <input type="text" id="invite-token" placeholder="Paste your invite code" />
+      </div>
+      <button class="submit-btn" id="accept-invite-btn" onclick="doAcceptInvite()" style="background:#27272a;border:1px solid #3f3f46;">
+        Join Workspace
+      </button>
+    </div>
+  </div>
 </div>
 
 <script>
   var BASE = window.location.origin;
 
-  // Redirect if already logged in
+  // Check for pending onboarding (user logged in but no tenant yet)
   (function() {
     var token = localStorage.getItem("crag_token");
-    if (token) window.location.replace("/");
+    if (token) {
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      if (!user.tenant_id) {
+        // Logged in but no tenant — show onboarding
+        showOnboarding();
+        return;
+      }
+      window.location.replace("/");
+      return;
+    }
 
     // Handle Google OAuth token in URL hash
     var hash = new URLSearchParams(window.location.hash.slice(1));
     var oauthToken = hash.get("token");
     if (oauthToken) {
       localStorage.setItem("crag_token", oauthToken);
-      // Fetch profile to populate crag_user
       fetch(BASE + "/auth/me", { headers: { "Authorization": "Bearer " + oauthToken } })
         .then(function(r) { return r.json(); })
         .then(function(u) {
-          localStorage.setItem("crag_user", JSON.stringify({
+          var userData = {
             username: u.username,
             display_name: u.display_name || u.username,
             role: u.role,
-            user_id: u.sub,
+            user_id: u.user_id || u.sub,
             email: u.email,
-          }));
-          window.location.replace("/");
+            tenant_id: u.tenant_id || null,
+            tenant_name: u.tenant_name || null,
+          };
+          localStorage.setItem("crag_user", JSON.stringify(userData));
+          if (!userData.tenant_id) {
+            showOnboarding();
+          } else {
+            window.location.replace("/");
+          }
         })
         .catch(function() { window.location.replace("/"); });
     }
@@ -298,13 +384,11 @@
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.error) {
-          // OAuth is configured — show buttons
           ["login-google-divider", "login-google-btn",
            "register-google-divider", "register-google-btn"].forEach(function(id) {
             var el = document.getElementById(id);
             if (el) el.style.display = "";
           });
-          // Fix display value for dividers
           document.getElementById("login-google-divider").style.display = "flex";
           document.getElementById("register-google-divider").style.display = "flex";
         }
@@ -315,20 +399,33 @@
   function showLogin() {
     document.getElementById("login-form").style.display = "block";
     document.getElementById("register-form").style.display = "none";
+    document.getElementById("onboarding-form").style.display = "none";
     clearErrors();
   }
 
   function showRegister() {
     document.getElementById("login-form").style.display = "none";
     document.getElementById("register-form").style.display = "block";
+    document.getElementById("onboarding-form").style.display = "none";
     clearErrors();
   }
 
+  function showOnboarding() {
+    document.getElementById("login-form").style.display = "none";
+    document.getElementById("register-form").style.display = "none";
+    document.getElementById("onboarding-form").style.display = "block";
+    clearErrors();
+  }
+
+  function toggleInviteCode() {
+    var sec = document.getElementById("invite-code-section");
+    sec.style.display = sec.style.display === "none" ? "block" : "none";
+  }
+
   function clearErrors() {
-    ["login-error", "register-error"].forEach(function(id) {
+    ["login-error", "register-error", "onboarding-error"].forEach(function(id) {
       var el = document.getElementById(id);
-      el.classList.remove("visible");
-      el.textContent = "";
+      if (el) { el.classList.remove("visible"); el.textContent = ""; }
     });
   }
 
@@ -336,6 +433,19 @@
     var el = document.getElementById(id);
     el.textContent = msg;
     el.classList.add("visible");
+  }
+
+  function _storeUser(data, extraFields) {
+    var user = Object.assign({
+      username: data.username,
+      display_name: data.display_name || data.username,
+      role: data.role,
+      user_id: data.user_id,
+      email: data.email || null,
+      tenant_id: data.tenant_id || null,
+      tenant_name: data.tenant_name || null,
+    }, extraFields || {});
+    localStorage.setItem("crag_user", JSON.stringify(user));
   }
 
   async function doLogin() {
@@ -361,14 +471,12 @@
         return;
       }
       localStorage.setItem("crag_token", data.token);
-      localStorage.setItem("crag_user", JSON.stringify({
-        username: data.username,
-        display_name: data.display_name || data.username,
-        role: data.role,
-        user_id: data.user_id,
-        email: data.email,
-      }));
-      window.location.replace("/");
+      _storeUser(data, { email: email });
+      if (!data.tenant_id) {
+        showOnboarding();
+      } else {
+        window.location.replace("/");
+      }
     } catch(e) {
       showError("login-error", "Network error. Please try again.");
     } finally {
@@ -406,14 +514,9 @@
         return;
       }
       localStorage.setItem("crag_token", data.token);
-      localStorage.setItem("crag_user", JSON.stringify({
-        username: data.username,
-        display_name: data.display_name || data.username,
-        role: data.role,
-        user_id: data.user_id,
-        email: email,
-      }));
-      window.location.replace("/");
+      _storeUser(data, { email: email });
+      // Always show onboarding after registration
+      showOnboarding();
     } catch(e) {
       showError("register-error", "Network error. Please try again.");
     } finally {
@@ -422,18 +525,102 @@
     }
   }
 
+  async function doCreateOrg() {
+    clearErrors();
+    var orgName = document.getElementById("org-name").value.trim();
+    if (!orgName) {
+      showError("onboarding-error", "Please enter a workspace name.");
+      return;
+    }
+    var token = localStorage.getItem("crag_token");
+    if (!token) {
+      showError("onboarding-error", "Session expired. Please sign in again.");
+      showLogin();
+      return;
+    }
+    var btn = document.getElementById("create-org-btn");
+    btn.disabled = true;
+    btn.textContent = "Creating...";
+    try {
+      var res = await fetch(BASE + "/auth/create-org", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ org_name: orgName }),
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        showError("onboarding-error", data.detail || "Failed to create workspace.");
+        return;
+      }
+      // Update stored token and user
+      localStorage.setItem("crag_token", data.token);
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      user.role = data.role;
+      user.tenant_id = data.tenant_id;
+      user.tenant_name = data.tenant_name;
+      localStorage.setItem("crag_user", JSON.stringify(user));
+      window.location.replace("/");
+    } catch(e) {
+      showError("onboarding-error", "Network error. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Create Workspace";
+    }
+  }
+
+  async function doAcceptInvite() {
+    clearErrors();
+    var inviteToken = document.getElementById("invite-token").value.trim();
+    if (!inviteToken) {
+      showError("onboarding-error", "Please paste your invite code.");
+      return;
+    }
+    var token = localStorage.getItem("crag_token");
+    if (!token) {
+      showError("onboarding-error", "Session expired. Please sign in again.");
+      showLogin();
+      return;
+    }
+    var btn = document.getElementById("accept-invite-btn");
+    btn.disabled = true;
+    btn.textContent = "Joining...";
+    try {
+      var res = await fetch(BASE + "/auth/accept-invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": "Bearer " + token },
+        body: JSON.stringify({ token: inviteToken }),
+      });
+      var data = await res.json();
+      if (!res.ok) {
+        showError("onboarding-error", data.detail || "Invalid or expired invite.");
+        return;
+      }
+      localStorage.setItem("crag_token", data.token);
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      user.role = data.role;
+      user.tenant_name = data.tenant_name;
+      localStorage.setItem("crag_user", JSON.stringify(user));
+      window.location.replace("/");
+    } catch(e) {
+      showError("onboarding-error", "Network error. Please try again.");
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Join Workspace";
+    }
+  }
+
   function doGoogleLogin() {
     window.location.href = BASE + "/auth/google";
   }
 
-  // Enter key support
   document.addEventListener("keydown", function(e) {
     if (e.key === "Enter") {
-      if (document.getElementById("login-form").style.display !== "none") {
-        doLogin();
-      } else {
-        doRegister();
-      }
+      var loginVisible = document.getElementById("login-form").style.display !== "none";
+      var registerVisible = document.getElementById("register-form").style.display !== "none";
+      var onboardingVisible = document.getElementById("onboarding-form").style.display !== "none";
+      if (loginVisible) doLogin();
+      else if (registerVisible) doRegister();
+      else if (onboardingVisible) doCreateOrg();
     }
   });
 </script>

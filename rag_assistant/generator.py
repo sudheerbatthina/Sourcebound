@@ -107,6 +107,7 @@ def answer_question(
     session_id: str = "global",
     history: list[dict] | None = None,
     answer_style: str = "detailed",
+    tenant_id: str = "default",
 ) -> dict:
     """Run the full RAG pipeline with query rewriting and semantic caching.
 
@@ -134,7 +135,7 @@ def answer_question(
     if rewritten != question:
         logger.info("Query rewritten: %r → %r", question, rewritten)
 
-    hits = retrieve(rewritten, top_k=top_k, user_group=user_group, session_id=session_id)
+    hits = retrieve(rewritten, top_k=top_k, user_group=user_group, session_id=session_id, tenant_id=tenant_id)
     context = build_context(hits)
 
     client = OpenAI()
@@ -176,6 +177,7 @@ def stream_answer(
     history: list[dict] | None = None,
     mode: str = "chat",
     answer_style: str = "detailed",
+    tenant_id: str = "default",
 ) -> Generator[str, None, None]:
     """Yield SSE-formatted chunks for streaming responses."""
 
@@ -194,7 +196,7 @@ def stream_answer(
 
     # 3. Retrieve — research mode uses 3× chunks up to 20
     effective_top_k = min(top_k * 3, 20) if mode == "research" else top_k
-    hits = retrieve(rewritten, top_k=effective_top_k, user_group=user_group, session_id=session_id)
+    hits = retrieve(rewritten, top_k=effective_top_k, user_group=user_group, session_id=session_id, tenant_id=tenant_id)
     context = build_context(hits)
 
     # 4. Stream from OpenAI

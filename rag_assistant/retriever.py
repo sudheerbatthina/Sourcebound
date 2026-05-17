@@ -8,7 +8,7 @@ import chromadb
 from .config import (
     CHROMA_DIR, COLLECTION_NAME, EMBEDDING_MODEL, TOP_K,
     COHERE_API_KEY, RERANK_CANDIDATES, RERANK_TOP_N,
-    GROUP_ACCESS_MAP, DEFAULT_ACCESS_LEVEL,
+    GROUP_ACCESS_MAP, DEFAULT_ACCESS_LEVEL, get_collection_name,
 )
 from .hybrid_retriever import bm25_search, reciprocal_rank_fusion
 
@@ -44,6 +44,7 @@ def retrieve(
     user_group: str | None = None,
     session_id: str = "global",
     use_hybrid: bool = True,
+    tenant_id: str = "default",
 ) -> list[dict]:
     """Find the most relevant chunks for a query.
 
@@ -69,7 +70,15 @@ def retrieve(
     ).data[0].embedding
 
     chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = chroma_client.get_collection(name=COLLECTION_NAME)
+    col_name = get_collection_name(tenant_id)
+    try:
+        collection = chroma_client.get_collection(name=col_name)
+    except Exception:
+        # Fallback to legacy collection if tenant collection doesn't exist yet
+        try:
+            collection = chroma_client.get_collection(name=COLLECTION_NAME)
+        except Exception:
+            return []
 
     n_candidates = min(n_candidates, collection.count())
     if n_candidates == 0:

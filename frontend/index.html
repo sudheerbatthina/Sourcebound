@@ -1233,7 +1233,7 @@
   <!-- SIDEBAR -->
   <div id="sidebar">
     <div class="sidebar-top">
-      <span class="sidebar-brand">Fetch AI</span>
+      <span class="sidebar-brand" id="sidebar-brand-text">Fetch AI</span>
       <div class="sidebar-icon-row">
         <button class="sidebar-icon-btn" id="open-docs-btn" title="Documents" onclick="openDocsPanel()">📁</button>
         <button class="sidebar-icon-btn" id="open-settings-btn" title="Settings" onclick="openSettingsPanel()">&#9881;&#65039;</button>
@@ -1453,8 +1453,25 @@
   const BASE = window.location.origin;
 
   function getToken() { return localStorage.getItem("crag_token") || ""; }
-  function getAuth() { return { "Authorization": "Bearer " + getToken() }; }
-  function getAuthJson() { return { "Authorization": "Bearer " + getToken(), "Content-Type": "application/json" }; }
+
+  function getAuthHeaders(isFormData = false) {
+    try {
+      const token = localStorage.getItem("crag_token");
+      const headers = token
+        ? { "Authorization": `Bearer ${token}` }
+        : { "X-API-Key": "dev-key-123" };
+      if (!isFormData) {
+        headers["Content-Type"] = "application/json";
+      }
+      return headers;
+    } catch(e) {
+      return { "X-API-Key": "dev-key-123" };
+    }
+  }
+
+  // Aliases so existing callers keep working
+  function getAuth() { return getAuthHeaders(true); }
+  function getAuthJson() { return getAuthHeaders(false); }
 
   function checkAuth() {
     if (!getToken()) { window.location.replace("/login"); }
@@ -1736,26 +1753,51 @@
     }
   }
 
-  function handleKbFileUpload(input) {
+  async function handleKbFileUpload(input) {
     if (!input.files || !input.files[0]) return;
     var file = input.files[0];
     var formData = new FormData();
     formData.append("file", file);
-    fetch(BASE + "/upload", { method: "POST", headers: getAuth(), body: formData })
-      .then(function() { loadKbDocs(); })
-      .catch(function() { alert("Upload failed."); });
     input.value = "";
+    try {
+      var response = await fetch(BASE + "/upload", {
+        method: "POST",
+        headers: getAuthHeaders(true),
+        body: formData
+      });
+      if (!response.ok) {
+        var err = await response.json().catch(function() { return {}; });
+        throw new Error(err.detail || response.statusText);
+      }
+      loadKbDocs();
+    } catch(e) {
+      console.error("KB upload error:", e);
+      alert("Upload failed: " + e.message);
+    }
   }
 
-  function handleDocsChatFileUpload(input) {
+  async function handleDocsChatFileUpload(input) {
     if (!input.files || !input.files[0] || !activeChatId) return;
     var file = input.files[0];
     var formData = new FormData();
     formData.append("file", file);
-    fetch(BASE + "/chats/" + activeChatId + "/upload", { method: "POST", headers: getAuth(), body: formData })
-      .then(function() { loadSessionDocsPanel(); refreshSessionDocChips(); })
-      .catch(function() { alert("Upload failed."); });
     input.value = "";
+    try {
+      var response = await fetch(BASE + "/chats/" + activeChatId + "/upload", {
+        method: "POST",
+        headers: getAuthHeaders(true),
+        body: formData
+      });
+      if (!response.ok) {
+        var err = await response.json().catch(function() { return {}; });
+        throw new Error(err.detail || response.statusText);
+      }
+      loadSessionDocsPanel();
+      refreshSessionDocChips();
+    } catch(e) {
+      console.error("Session upload error:", e);
+      alert("Upload failed: " + e.message);
+    }
   }
 
   // ===== SETTINGS PANEL =====
@@ -2373,15 +2415,22 @@
     var file = input.files[0];
     var formData = new FormData();
     formData.append("file", file);
+    input.value = "";
     try {
-      await fetch(BASE + "/chats/" + activeChatId + "/upload", {
-        method: "POST", headers: AUTH, body: formData
+      var response = await fetch(BASE + "/chats/" + activeChatId + "/upload", {
+        method: "POST",
+        headers: getAuthHeaders(true),
+        body: formData
       });
+      if (!response.ok) {
+        var err = await response.json().catch(function() { return {}; });
+        throw new Error(err.detail || response.statusText);
+      }
       setTimeout(refreshSessionDocChips, 1500);
     } catch(e) {
-      alert("Upload failed.");
+      console.error("Session upload error:", e);
+      alert("Upload failed: " + e.message);
     }
-    input.value = "";
   }
 
   async function refreshSessionDocChips() {
@@ -2451,6 +2500,11 @@
         settings.name = cragUser.display_name || cragUser.username;
         settings.role = cragUser.role || "member";
         populateProfileRow();
+      }
+      // Show workspace name in sidebar brand
+      var brandEl = document.getElementById("sidebar-brand-text");
+      if (brandEl) {
+        brandEl.textContent = cragUser.tenant_name || "Fetch AI";
       }
       // Populate popup email
       var emailEl = document.getElementById("popover-email");

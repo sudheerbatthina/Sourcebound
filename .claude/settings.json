@@ -30,7 +30,12 @@
       "Bash(curl -s http://localhost:8000/auth/google)",
       "Bash(pkill -f \"uvicorn\")",
       "Bash(pkill -f \"api:app\")",
-      "PowerShell(Get-Process | Where-Object {$_.Name -match \"python\"} | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 2; \\(Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue\\) ? \"Port 8000 still in use\" : \"Port 8000 free\")"
+      "PowerShell(Get-Process | Where-Object {$_.Name -match \"python\"} | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep 2; \\(Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue\\) ? \"Port 8000 still in use\" : \"Port 8000 free\")",
+      "Bash(python -c \"import api; print\\('api.py imports OK'\\)\")",
+      "PowerShell(Get-Job)",
+      "PowerShell(Receive-Job -Keep 2>&1)",
+      "Bash(sleep 8 && cat /mnt/c/Users/sudhe/AppData/Local/Temp/claude/c--Users-sudhe-projects-rag-assistant/75fe9d1f-d9a5-40f6-975d-d91f34e6ec57/tasks/b0h4a0i1b.output 2>&1 | head -30)",
+      "Read(//mnt/c/Users/sudhe/AppData/Local/Temp/claude/c--Users-sudhe-projects-rag-assistant/75fe9d1f-d9a5-40f6-975d-d91f34e6ec57/tasks/**)"
     ]
   }
 }

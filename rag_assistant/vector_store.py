@@ -2,16 +2,29 @@ from pathlib import Path
 
 import chromadb
 
-from .config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR
+from .config import CHROMA_DIR, COLLECTION_NAME, DATA_DIR, get_collection_name
 from .chunker import chunk_document
 from .embedder import embed_chunks
 from .pdf_extractor import extract_elements_and_tables
 
 
-def build_vector_store(chunks: list[dict], session_id: str = "global") -> chromadb.Collection:
-    """Store embedded chunks in a persistent Chroma collection using upsert."""
+def get_tenant_collection(tenant_id: str) -> chromadb.Collection:
+    """Get or create the Chroma collection for a tenant."""
     client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+    return client.get_or_create_collection(name=get_collection_name(tenant_id))
+
+
+def get_tenant_chunk_count(tenant_id: str) -> int:
+    try:
+        return get_tenant_collection(tenant_id).count()
+    except Exception:
+        return 0
+
+
+def build_vector_store(chunks: list[dict], session_id: str = "global",
+                       tenant_id: str = "default") -> chromadb.Collection:
+    """Store embedded chunks in a persistent Chroma collection using upsert."""
+    collection = get_tenant_collection(tenant_id)
 
     collection.upsert(
         ids=[c["chunk_id"] for c in chunks],
@@ -23,6 +36,7 @@ def build_vector_store(chunks: list[dict], session_id: str = "global") -> chroma
                 "page_number": c["page_number"],
                 "chunk_type": c["chunk_type"],
                 "session_id": session_id,
+                "tenant_id": tenant_id,
             }
             for c in chunks
         ],
@@ -30,7 +44,8 @@ def build_vector_store(chunks: list[dict], session_id: str = "global") -> chroma
     return collection
 
 
-def index_all_pdfs(data_dir: Path = DATA_DIR) -> chromadb.Collection:
+def index_all_pdfs(data_dir: Path = DATA_DIR,
+                   tenant_id: str = "default") -> chromadb.Collection:
     """Index every PDF in the data directory using section-aware chunking."""
     pdf_files = sorted(data_dir.glob("*.pdf"))
     if not pdf_files:
@@ -51,13 +66,14 @@ def index_all_pdfs(data_dir: Path = DATA_DIR) -> chromadb.Collection:
     embed_chunks(all_chunks)
 
     print("Storing in vector database...")
-    collection = build_vector_store(all_chunks, session_id="global")
-    print(f"Done. {collection.count()} chunks in '{COLLECTION_NAME}'")
+    collection = build_vector_store(all_chunks, session_id="global", tenant_id=tenant_id)
+    print(f"Done. {collection.count()} chunks in '{get_collection_name(tenant_id)}'")
     return collection
 
 
-def index_single_pdf(pdf_path: Path) -> chromadb.Collection:
-    """Index a single PDF file into the global vector store."""
+def index_single_pdf(pdf_path: Path,
+                     tenant_id: str = "default") -> chromadb.Collection:
+    """Index a single PDF file into the tenant's vector store."""
     print(f"Processing {pdf_path.name}...")
     elements, tables_by_page = extract_elements_and_tables(pdf_path)
     chunks = chunk_document(elements, tables_by_page, source_name=pdf_path.name)
@@ -69,12 +85,13 @@ def index_single_pdf(pdf_path: Path) -> chromadb.Collection:
     embed_chunks(chunks)
 
     print("Storing in vector database...")
-    collection = build_vector_store(chunks, session_id="global")
-    print(f"Done. {collection.count()} total chunks in '{COLLECTION_NAME}'")
+    collection = build_vector_store(chunks, session_id="global", tenant_id=tenant_id)
+    print(f"Done. {collection.count()} total chunks in '{get_collection_name(tenant_id)}'")
     return collection
 
 
-def index_pdf_for_session(pdf_path: Path, session_id: str) -> chromadb.Collection:
+def index_pdf_for_session(pdf_path: Path, session_id: str,
+                          tenant_id: str = "default") -> chromadb.Collection:
     """Index a PDF scoped to a specific chat session."""
     print(f"Processing {pdf_path.name} for session {session_id}...")
     elements, tables_by_page = extract_elements_and_tables(pdf_path)
@@ -82,32 +99,54 @@ def index_pdf_for_session(pdf_path: Path, session_id: str) -> chromadb.Collectio
     for chunk in chunks:
         chunk["chunk_id"] = f"{session_id}_{chunk['chunk_id']}"
     embed_chunks(chunks)
-    collection = build_vector_store(chunks, session_id=session_id)
+    collection = build_vector_store(chunks, session_id=session_id, tenant_id=tenant_id)
     print(f"Done. {len(chunks)} chunks indexed for session {session_id}")
     return collection
 
 
-def delete_session_chunks(session_id: str):
+def delete_session_chunks(session_id: str, tenant_id: str = "default"):
     """Remove all vectors belonging to a specific chat session."""
-    client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+    collection = get_tenant_collection(tenant_id)
     results = collection.get(where={"session_id": {"$eq": session_id}}, include=[])
     if results["ids"]:
         collection.delete(ids=results["ids"])
         print(f"Deleted {len(results['ids'])} chunks for session {session_id}")
 
 
-def migrate_existing_chunks():
-    """Add session_id='global' to any chunks missing it (one-time migration)."""
+def migrate_existing_chunks(tenant_id: str = "default"):
+    """Add session_id='global' to any chunks missing it. Also migrates legacy COLLECTION_NAME to tenant collection."""
     client = chromadb.PersistentClient(path=CHROMA_DIR)
-    collection = client.get_or_create_collection(name=COLLECTION_NAME)
+
+    # First migrate legacy collection if it exists and has data
+    try:
+        legacy = client.get_collection(name=COLLECTION_NAME)
+        legacy_results = legacy.get(include=["documents", "metadatas", "embeddings"])
+        if legacy_results["ids"]:
+            print(f"Migrating {len(legacy_results['ids'])} chunks from legacy collection to tenant '{tenant_id}'...")
+            tenant_col = get_tenant_collection(tenant_id)
+            tenant_col.upsert(
+                ids=legacy_results["ids"],
+                embeddings=legacy_results["embeddings"],
+                documents=legacy_results["documents"],
+                metadatas=[
+                    {**m, "session_id": m.get("session_id", "global"), "tenant_id": tenant_id}
+                    for m in legacy_results["metadatas"]
+                ],
+            )
+            print(f"Migrated {len(legacy_results['ids'])} chunks to tenant collection.")
+            return
+    except Exception:
+        pass
+
+    # Fix missing session_id in tenant collection
+    collection = get_tenant_collection(tenant_id)
     results = collection.get(include=["metadatas"])
     ids_to_update = []
     updated_metadatas = []
     for i, meta in enumerate(results["metadatas"]):
         if "session_id" not in meta:
             ids_to_update.append(results["ids"][i])
-            updated_metadatas.append({**meta, "session_id": "global"})
+            updated_metadatas.append({**meta, "session_id": "global", "tenant_id": tenant_id})
     if ids_to_update:
         collection.update(ids=ids_to_update, metadatas=updated_metadatas)
         print(f"Migrated {len(ids_to_update)} chunks to session_id='global'")

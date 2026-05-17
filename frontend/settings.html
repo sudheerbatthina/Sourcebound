@@ -328,6 +328,7 @@
     <button class="nav-item" onclick="showSection('profile', this)">Profile</button>
     <button class="nav-item" onclick="showSection('privacy', this)">Privacy &amp; Data</button>
     <button class="nav-item" onclick="showSection('security', this)">Security</button>
+    <button class="nav-item" id="nav-team" onclick="showSection('team', this); loadTeam()">Team</button>
   </nav>
 
   <!-- CONTENT -->
@@ -565,6 +566,43 @@
       </div>
     </div>
 
+    <!-- TEAM -->
+    <div class="section" id="section-team">
+      <div class="section-title">Team</div>
+
+      <div class="setting-row" id="team-invite-row">
+        <div>
+          <div class="setting-label">Invite Team Member</div>
+          <div class="setting-desc">Send an invite link to add someone to your workspace.</div>
+        </div>
+        <div class="setting-control" style="flex-direction:column;align-items:flex-end;gap:6px;">
+          <input type="email" id="invite-email" placeholder="colleague@example.com"
+            style="padding:7px 10px;background:#0f0f10;border:1px solid #3f3f46;border-radius:6px;color:#f4f4f5;font-size:13px;font-family:inherit;outline:none;width:220px;" />
+          <select id="invite-role"
+            style="padding:7px 10px;background:#0f0f10;border:1px solid #3f3f46;border-radius:6px;color:#f4f4f5;font-size:13px;font-family:inherit;outline:none;">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button class="btn" onclick="sendInvite()">Send Invite</button>
+        </div>
+      </div>
+
+      <div id="invite-link-box" style="display:none;margin-top:12px;padding:10px 14px;background:#0f0f10;border:1px solid #2a2a2e;border-radius:8px;">
+        <div style="font-size:11px;color:#71717a;margin-bottom:4px;">Invite link (copy and share):</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <code id="invite-link-text" style="font-size:12px;color:#818cf8;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></code>
+          <button class="btn" onclick="copyInviteLink()" style="flex-shrink:0;">Copy</button>
+        </div>
+      </div>
+
+      <div style="margin-top:24px;">
+        <div class="setting-label" style="margin-bottom:12px;">Team Members</div>
+        <div id="team-list" style="display:flex;flex-direction:column;gap:8px;">
+          <div style="color:#52525b;font-size:13px;">Loading...</div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -728,6 +766,87 @@
     window.location.replace("/login");
   }
 
+  // ===== TEAM =====
+  var _lastInviteLink = "";
+
+  function getAuthHeaders() {
+    var token = localStorage.getItem("crag_token");
+    return token
+      ? { "Authorization": "Bearer " + token, "Content-Type": "application/json" }
+      : { "Content-Type": "application/json" };
+  }
+
+  function _isAdmin() {
+    try {
+      var u = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      return u.role === "admin";
+    } catch(e) { return false; }
+  }
+
+  async function loadTeam() {
+    if (!_isAdmin()) {
+      document.getElementById("team-list").innerHTML =
+        '<div style="color:#52525b;font-size:13px;">Team management is only available to admins.</div>';
+      document.getElementById("team-invite-row").style.display = "none";
+      return;
+    }
+    try {
+      var res = await fetch(BASE + "/admin/team", { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error("Failed");
+      var members = await res.json();
+      var html = members.map(function(m) {
+        var role = (m.role || "member").toLowerCase();
+        var badge = role === "admin"
+          ? '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(139,92,246,0.15);color:#a78bfa;font-weight:600;">admin</span>'
+          : '<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#27272a;color:#71717a;font-weight:600;">member</span>';
+        var name = m.display_name || m.username;
+        var initials = name.trim().split(/\s+/).map(function(p) { return p[0]; }).join("").slice(0,2).toUpperCase();
+        return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #2a2a2e;">'
+          + '<div style="width:32px;height:32px;border-radius:50%;background:#27272a;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#a1a1aa;flex-shrink:0;">' + initials + '</div>'
+          + '<div style="flex:1;">'
+          + '<div style="font-size:13px;font-weight:500;color:#f4f4f5;">' + name + '</div>'
+          + '<div style="font-size:11px;color:#71717a;">' + (m.email || "") + '</div>'
+          + '</div>'
+          + badge
+          + '</div>';
+      }).join("");
+      document.getElementById("team-list").innerHTML = html || '<div style="color:#52525b;font-size:13px;">No team members found.</div>';
+    } catch(e) {
+      document.getElementById("team-list").innerHTML = '<div style="color:#52525b;font-size:13px;">Could not load team.</div>';
+    }
+  }
+
+  async function sendInvite() {
+    var email = document.getElementById("invite-email").value.trim();
+    var role = document.getElementById("invite-role").value;
+    if (!email) { alert("Please enter an email address."); return; }
+    try {
+      var res = await fetch(BASE + "/admin/invites", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ email: email, role: role }),
+      });
+      var data = await res.json();
+      if (!res.ok) { alert(data.detail || "Failed to create invite."); return; }
+      _lastInviteLink = data.invite_link;
+      document.getElementById("invite-link-text").textContent = _lastInviteLink;
+      document.getElementById("invite-link-box").style.display = "block";
+      document.getElementById("invite-email").value = "";
+    } catch(e) {
+      alert("Network error. Please try again.");
+    }
+  }
+
+  function copyInviteLink() {
+    navigator.clipboard.writeText(_lastInviteLink).then(function() {
+      var btn = document.querySelector("#invite-link-box button");
+      btn.textContent = "Copied!";
+      setTimeout(function() { btn.textContent = "Copy"; }, 2000);
+    }).catch(function() {
+      alert("Could not copy — please copy manually: " + _lastInviteLink);
+    });
+  }
+
   // ===== INIT =====
   function init() {
     checkAuth();
@@ -769,6 +888,11 @@
       var role = (user.role || "member").toLowerCase();
       badge.textContent = role;
       badge.className = "role-badge " + (role === "admin" ? "admin" : "member");
+      // Hide Team nav item for non-admins
+      if (role !== "admin") {
+        var teamNav = document.getElementById("nav-team");
+        if (teamNav) teamNav.style.display = "none";
+      }
     } catch(e) {}
   }
 

@@ -15,6 +15,12 @@ CACHE_DIR = Path(".cache")
 
 # Collection
 COLLECTION_NAME = "rag_chunks"
+COLLECTION_PREFIX = os.environ.get("COLLECTION_PREFIX", "fetch_ai")
+
+
+def get_collection_name(tenant_id: str) -> str:
+    """Each tenant gets their own Chroma collection."""
+    return f"{COLLECTION_PREFIX}_{tenant_id}"
 
 # Models
 EMBEDDING_MODEL = "text-embedding-3-small"
