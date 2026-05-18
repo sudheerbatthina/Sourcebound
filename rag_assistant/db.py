@@ -100,13 +100,23 @@ def init_db():
             );
             CREATE TABLE IF NOT EXISTS connectors (
                 id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                connector_type TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                config TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'idle',
+                last_sync TEXT,
+                last_error TEXT,
+                sync_interval_minutes INTEGER NOT NULL DEFAULT 60,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT ''
             );
         """)
     migrate_add_display_name()
     migrate_add_user_id_to_chats()
     migrate_add_tenant_id()
+    migrate_connectors_full_schema()
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +148,26 @@ def migrate_add_tenant_id():
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT")
             except Exception:
                 pass  # already exists
+
+
+def migrate_connectors_full_schema():
+    """Add missing columns to the connectors table for existing installs."""
+    new_cols = [
+        ("connector_type", "TEXT NOT NULL DEFAULT ''"),
+        ("config", "TEXT NOT NULL DEFAULT '{}'"),
+        ("status", "TEXT NOT NULL DEFAULT 'idle'"),
+        ("last_sync", "TEXT"),
+        ("last_error", "TEXT"),
+        ("sync_interval_minutes", "INTEGER NOT NULL DEFAULT 60"),
+        ("enabled", "INTEGER NOT NULL DEFAULT 1"),
+        ("updated_at", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    with get_conn() as conn:
+        for col, defn in new_cols:
+            try:
+                conn.execute(f"ALTER TABLE connectors ADD COLUMN {col} {defn}")
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +516,86 @@ def get_analytics(tenant_id: str = None) -> dict:
         "feedback_good": feedback_good,
         "feedback_bad": feedback_bad,
     }
+
+
+# ---------------------------------------------------------------------------
+# Connector functions
+# ---------------------------------------------------------------------------
+
+def upsert_connector(tenant_id: str, connector_type: str, name: str,
+                     config: str, sync_interval_minutes: int = 60) -> dict:
+    """Insert or update a connector for a tenant+type pair."""
+    import json as _json
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM connectors WHERE tenant_id=? AND connector_type=?",
+            (tenant_id, connector_type)
+        ).fetchone()
+        if existing:
+            cid = existing["id"]
+            conn.execute(
+                "UPDATE connectors SET name=?, config=?, sync_interval_minutes=?, "
+                "enabled=1, updated_at=? WHERE id=?",
+                (name, config, sync_interval_minutes, now, cid)
+            )
+        else:
+            cid = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO connectors (id, tenant_id, connector_type, name, config, "
+                "status, sync_interval_minutes, enabled, created_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (cid, tenant_id, connector_type, name, config,
+                 "idle", sync_interval_minutes, 1, now, now)
+            )
+    return get_connector_by_id(cid)
+
+
+def get_connector_by_id(connector_id: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE id=?", (connector_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_connector(tenant_id: str, connector_type: str) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM connectors WHERE tenant_id=? AND connector_type=?",
+            (tenant_id, connector_type)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_connectors(tenant_id: str = None) -> list:
+    with get_conn() as conn:
+        if tenant_id:
+            rows = conn.execute(
+                "SELECT * FROM connectors WHERE tenant_id=? ORDER BY created_at ASC",
+                (tenant_id,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM connectors ORDER BY created_at ASC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_connector_status(connector_id: str, status: str,
+                             last_sync: str = None, last_error: str = None):
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE connectors SET status=?, last_sync=COALESCE(?,last_sync), "
+            "last_error=COALESCE(?,last_error), updated_at=? WHERE id=?",
+            (status, last_sync, last_error, now, connector_id)
+        )
+
+
+def delete_connector(connector_id: str):
+    with get_conn() as conn:
+        conn.execute("DELETE FROM connectors WHERE id=?", (connector_id,))
 
 
 def purge_old_logs(days: int = 7) -> int:

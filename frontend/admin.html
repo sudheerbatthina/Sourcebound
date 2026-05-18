@@ -705,6 +705,164 @@
 
     .fb-summary-pill.good { background: #dcfce7; color: #166534; }
     .fb-summary-pill.bad  { background: #fee2e2; color: #991b1b; }
+
+    /* ===== CONNECTORS ===== */
+    .connector-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .connector-card {
+      background: #fff;
+      border: 1px solid #e4e4e7;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .connector-card.connected {
+      border-color: #a3e635;
+      background: #f7fef0;
+    }
+
+    .connector-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .connector-icon {
+      font-size: 24px;
+      flex-shrink: 0;
+    }
+
+    .connector-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #18181b;
+    }
+
+    .connector-desc {
+      font-size: 12px;
+      color: #71717a;
+      margin: 0;
+      line-height: 1.4;
+    }
+
+    .connector-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 99px;
+    }
+
+    .connector-status.on { background: #dcfce7; color: #166534; }
+    .connector-status.off { background: #f4f4f5; color: #71717a; }
+    .connector-status.syncing { background: #fef9c3; color: #854d0e; }
+    .connector-status.error { background: #fee2e2; color: #991b1b; }
+
+    .connector-meta {
+      font-size: 11px;
+      color: #a1a1aa;
+    }
+
+    .connector-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .connector-actions button {
+      flex: 1;
+      padding: 6px 10px;
+      border-radius: 7px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid #e4e4e7;
+      background: #fff;
+      color: #18181b;
+      transition: background 0.12s;
+    }
+
+    .connector-actions button:hover { background: #f4f4f5; }
+    .connector-actions button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .connector-actions button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .connector-actions button.danger { color: #ef4444; border-color: #fca5a5; }
+    .connector-actions button.danger:hover { background: #fee2e2; }
+
+    /* ===== MODAL ===== */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal-box {
+      background: #fff;
+      border-radius: 14px;
+      padding: 28px 28px 24px;
+      width: 480px;
+      max-width: 95vw;
+      max-height: 88vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    }
+
+    .modal-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #18181b;
+      margin-bottom: 18px;
+    }
+
+    .modal-field {
+      margin-bottom: 14px;
+    }
+
+    .modal-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: #52525b;
+      margin-bottom: 5px;
+    }
+
+    .modal-input {
+      width: 100%;
+      padding: 8px 11px;
+      border: 1px solid #e4e4e7;
+      border-radius: 7px;
+      font-size: 13px;
+      font-family: inherit;
+      color: #18181b;
+      background: #fff;
+      outline: none;
+    }
+
+    .modal-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+    .modal-textarea { min-height: 80px; resize: vertical; }
+    .modal-footer { display: flex; gap: 10px; margin-top: 18px; justify-content: flex-end; }
+    .modal-footer button { padding: 8px 18px; border-radius: 7px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid #e4e4e7; background: #fff; color: #18181b; }
+    .modal-footer button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .modal-footer button.primary:hover { background: var(--accent-hover); }
+    .modal-footer button:hover { background: #f4f4f5; }
+    .modal-test-result { margin-top: 12px; font-size: 13px; padding: 8px 12px; border-radius: 7px; display: none; }
+    .modal-test-result.ok { background: #dcfce7; color: #166534; display: block; }
+    .modal-test-result.err { background: #fee2e2; color: #991b1b; display: block; }
   </style>
 </head>
 <body>
@@ -739,6 +897,9 @@
     </button>
     <button class="nav-btn" data-tab="users" onclick="switchTab('users')">
       <span class="nav-icon">&#128100;</span> Users
+    </button>
+    <button class="nav-btn" data-tab="connectors" onclick="switchTab('connectors')">
+      <span class="nav-icon">&#128268;</span> Connectors
     </button>
   </div>
 
@@ -963,6 +1124,13 @@
       </div>
     </div>
 
+    <!-- TAB: CONNECTORS -->
+    <div id="tab-connectors" class="tab-panel">
+      <div id="connectors-grid" class="connector-grid">
+        <div class="loading-msg">Loading connectors...</div>
+      </div>
+    </div>
+
     <!-- TAB: QUERY TESTER -->
     <div id="tab-querytester" class="tab-panel">
       <div class="qt-form">
@@ -1002,6 +1170,24 @@
 
 <div id="toast-container"></div>
 
+<!-- Connector config modal -->
+<div class="modal-overlay" id="connector-modal">
+  <div class="modal-box">
+    <div class="modal-title" id="connector-modal-title">Configure Connector</div>
+    <div id="connector-modal-fields"></div>
+    <div class="modal-field">
+      <label class="modal-label">Sync Interval (minutes)</label>
+      <input class="modal-input" type="number" id="connector-interval" value="60" min="5" />
+    </div>
+    <div class="modal-test-result" id="connector-test-result"></div>
+    <div class="modal-footer">
+      <button onclick="closeConnectorModal()">Cancel</button>
+      <button onclick="testConnector()">Test Connection</button>
+      <button class="primary" onclick="saveConnector()">Save &amp; Enable</button>
+    </div>
+  </div>
+</div>
+
 <script>
   var BASE = window.location.origin;
 
@@ -1028,6 +1214,7 @@
     logs: "Logs",
     feedback: "Feedback",
     users: "Users",
+    connectors: "Connectors",
   };
 
   // ===== TOAST =====
@@ -1092,6 +1279,7 @@
     else if (tab === "logs") loadLogsTab();
     else if (tab === "feedback") loadFeedbackTab();
     else if (tab === "users") loadUsersTab();
+    else if (tab === "connectors") loadConnectorsTab();
   }
 
   // ===== OVERVIEW =====
@@ -1735,6 +1923,213 @@
       showToast("Failed: " + e.message, "error");
     }
   }
+
+  // ===== CONNECTORS TAB =====
+  var _connectorMeta = null;
+  var _connectorInstalled = [];
+  var _activeConnectorType = null;
+
+  async function loadConnectorsTab() {
+    var grid = document.getElementById("connectors-grid");
+    grid.innerHTML = '<div class="loading-msg">Loading...</div>';
+    try {
+      var [metaRes, installedRes] = await Promise.all([
+        fetch(BASE + "/connectors/metadata", { headers: getAuth() }),
+        fetch(BASE + "/admin/connectors", { headers: getAuth() }),
+      ]);
+      _connectorMeta = await metaRes.json();
+      _connectorInstalled = await installedRes.json();
+      renderConnectorsGrid();
+    } catch(e) {
+      grid.innerHTML = '<div class="empty-table-msg">Failed to load connectors.</div>';
+      showToast("Failed to load connectors.", "error");
+    }
+  }
+
+  function renderConnectorsGrid() {
+    var grid = document.getElementById("connectors-grid");
+    if (!_connectorMeta) { grid.innerHTML = ""; return; }
+
+    var installedMap = {};
+    (_connectorInstalled || []).forEach(function(c) { installedMap[c.connector_type] = c; });
+
+    var html = "";
+    Object.keys(_connectorMeta).forEach(function(type) {
+      var meta = _connectorMeta[type];
+      var installed = installedMap[type];
+      var status = installed ? (installed.status || "idle") : "off";
+      var statusLabel = installed ? (status === "idle" ? "Connected" : status) : "Not connected";
+      var statusCls = installed ? (status === "error" ? "error" : status === "syncing" ? "syncing" : "on") : "off";
+      var lastSync = installed && installed.last_sync ? fmtDateTime(installed.last_sync) : "Never";
+      var connectedClass = installed ? " connected" : "";
+
+      html += '<div class="connector-card' + connectedClass + '">' +
+        '<div class="connector-card-header">' +
+        '<span class="connector-icon">' + esc(meta.icon || "🔌") + '</span>' +
+        '<div>' +
+        '<div class="connector-name">' + esc(meta.label) + '</div>' +
+        '<span class="connector-status ' + statusCls + '">' +
+        (installed ? '● ' : '○ ') + statusLabel +
+        '</span>' +
+        '</div>' +
+        '</div>' +
+        '<p class="connector-desc">' + esc(meta.description || "") + '</p>';
+
+      if (installed) {
+        html += '<div class="connector-meta">Last sync: ' + esc(lastSync) + '</div>';
+        if (installed.last_error && status === "error") {
+          html += '<div class="connector-meta" style="color:#ef4444;">' + esc(installed.last_error.slice(0, 80)) + '</div>';
+        }
+      }
+
+      html += '<div class="connector-actions">';
+      html += '<button class="primary" onclick="openConnectorModal(\'' + type + '\')">' + (installed ? '⚙ Configure' : '+ Connect') + '</button>';
+      if (installed) {
+        html += '<button onclick="syncConnector(\'' + type + '\')">↻ Sync</button>';
+        html += '<button class="danger" onclick="deleteConnector(\'' + type + '\')">Remove</button>';
+      }
+      html += '</div></div>';
+    });
+
+    grid.innerHTML = html || '<div class="empty-table-msg">No connector types available.</div>';
+  }
+
+  function openConnectorModal(type) {
+    _activeConnectorType = type;
+    var meta = _connectorMeta && _connectorMeta[type];
+    if (!meta) return;
+
+    document.getElementById("connector-modal-title").textContent = "Configure " + meta.label;
+    document.getElementById("connector-test-result").className = "modal-test-result";
+    document.getElementById("connector-test-result").textContent = "";
+
+    var installedMap = {};
+    (_connectorInstalled || []).forEach(function(c) { installedMap[c.connector_type] = c; });
+    var existing = installedMap[type];
+    var existingConfig = (existing && existing.config) || {};
+
+    var fieldsHtml = '<div class="modal-field"><label class="modal-label">Connector Name</label>' +
+      '<input class="modal-input" id="connector-name" type="text" placeholder="My ' + esc(meta.label) + '" ' +
+      'value="' + esc(existing ? existing.name : meta.label) + '" /></div>';
+
+    (meta.fields || []).forEach(function(f) {
+      var val = existingConfig[f.key] || "";
+      var isSecret = f.type === "password";
+      var inputType = isSecret ? "password" : (f.type === "number" ? "number" : "text");
+      var isTextarea = f.type === "textarea";
+      var req = f.required ? ' <span style="color:#ef4444;">*</span>' : '';
+      fieldsHtml += '<div class="modal-field"><label class="modal-label">' + esc(f.label) + req + '</label>';
+      if (isTextarea) {
+        fieldsHtml += '<textarea class="modal-input modal-textarea" id="cf-' + esc(f.key) + '" placeholder="' + esc(f.placeholder || "") + '">' + esc(val) + '</textarea>';
+      } else {
+        fieldsHtml += '<input class="modal-input" id="cf-' + esc(f.key) + '" type="' + inputType + '" placeholder="' + esc(f.placeholder || "") + '" value="' + (isSecret ? '' : esc(val)) + '" />';
+      }
+      fieldsHtml += '</div>';
+    });
+
+    document.getElementById("connector-modal-fields").innerHTML = fieldsHtml;
+    document.getElementById("connector-interval").value = existing ? (existing.sync_interval_minutes || 60) : 60;
+    document.getElementById("connector-modal").classList.add("open");
+  }
+
+  function closeConnectorModal() {
+    document.getElementById("connector-modal").classList.remove("open");
+    _activeConnectorType = null;
+  }
+
+  function _readConnectorForm() {
+    var type = _activeConnectorType;
+    var meta = _connectorMeta && _connectorMeta[type];
+    if (!meta) return null;
+    var name = document.getElementById("connector-name").value.trim() || meta.label;
+    var interval = parseInt(document.getElementById("connector-interval").value, 10) || 60;
+    var config = {};
+    (meta.fields || []).forEach(function(f) {
+      var el = document.getElementById("cf-" + f.key);
+      if (el) config[f.key] = el.value.trim();
+    });
+    return { name: name, config: config, sync_interval_minutes: interval };
+  }
+
+  async function testConnector() {
+    var payload = _readConnectorForm();
+    if (!payload) return;
+    var resultEl = document.getElementById("connector-test-result");
+    resultEl.className = "modal-test-result";
+    resultEl.textContent = "Testing...";
+    resultEl.style.display = "block";
+    try {
+      var res = await fetch(BASE + "/admin/connectors/" + _activeConnectorType + "/test", {
+        method: "POST",
+        headers: getAuthJson(),
+        body: JSON.stringify(payload),
+      });
+      var data = await res.json();
+      if (data.ok) {
+        resultEl.className = "modal-test-result ok";
+        resultEl.textContent = "✓ " + (data.message || "Connection successful");
+      } else {
+        resultEl.className = "modal-test-result err";
+        resultEl.textContent = "✗ " + (data.message || "Connection failed");
+      }
+    } catch(e) {
+      resultEl.className = "modal-test-result err";
+      resultEl.textContent = "✗ Network error";
+    }
+  }
+
+  async function saveConnector() {
+    var payload = _readConnectorForm();
+    if (!payload) return;
+    try {
+      var res = await fetch(BASE + "/admin/connectors/" + _activeConnectorType, {
+        method: "POST",
+        headers: getAuthJson(),
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        var err = await res.json().catch(function() { return {}; });
+        throw new Error(err.detail || "HTTP " + res.status);
+      }
+      showToast("Connector saved.", "success");
+      closeConnectorModal();
+      loadConnectorsTab();
+    } catch(e) {
+      showToast("Save failed: " + e.message, "error");
+    }
+  }
+
+  async function syncConnector(type) {
+    try {
+      var res = await fetch(BASE + "/admin/connectors/" + type + "/sync", {
+        method: "POST", headers: getAuth(),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      showToast("Sync started.", "success");
+      setTimeout(loadConnectorsTab, 2000);
+    } catch(e) {
+      showToast("Sync failed: " + e.message, "error");
+    }
+  }
+
+  async function deleteConnector(type) {
+    if (!confirm("Remove this connector? The synced documents will remain in the knowledge base.")) return;
+    try {
+      var res = await fetch(BASE + "/admin/connectors/" + type, {
+        method: "DELETE", headers: getAuth(),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      showToast("Connector removed.", "success");
+      loadConnectorsTab();
+    } catch(e) {
+      showToast("Remove failed: " + e.message, "error");
+    }
+  }
+
+  // Close modal on overlay click
+  document.getElementById("connector-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeConnectorModal();
+  });
 
   // ===== INIT =====
   function init() {

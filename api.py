@@ -28,6 +28,8 @@ from rag_assistant.db import (
     update_user_password, list_users, get_analytics,
     create_tenant, get_tenant, get_tenant_by_slug, list_tenant_users,
     create_invite, get_invite_by_token, accept_invite, update_tenant_user_tenant,
+    upsert_connector, get_connector, get_connector_by_id, list_connectors,
+    update_connector_status, delete_connector,
 )
 from rag_assistant.retriever import retrieve
 from rag_assistant.query_rewriter import rewrite_query
@@ -76,6 +78,12 @@ def _migrate_to_tenant():
 def _startup() -> None:
     init_db()
     _migrate_to_tenant()
+
+    try:
+        from rag_assistant.sync_engine import start_scheduler
+        start_scheduler()
+    except Exception as exc:
+        logger.warning("Connector scheduler failed to start: %s", exc)
 
     try:
         deleted = purge_old_logs(days=7)
@@ -286,6 +294,12 @@ class AcceptInviteRequest(BaseModel):
 class InviteRequest(BaseModel):
     email: str
     role: str = "member"
+
+
+class ConnectorConfig(BaseModel):
+    name: str
+    config: dict
+    sync_interval_minutes: int = 60
 
 
 # ---------------------------------------------------------------------------
@@ -1154,7 +1168,12 @@ def admin_team(user: dict = Depends(_require_auth)):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "cache_backend": cache_backend()}
+    return {
+        "status": "ok",
+        "cache_backend": cache_backend(),
+        "mcp_endpoint": "/mcp",
+        "mcp_sse": "/mcp/sse",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1229,6 +1248,127 @@ def _fire_webhook(event: str, filename: str, chunks: int | None, session_id: str
         }, timeout=5)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Connector endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/connectors/metadata")
+def connectors_metadata(_user: dict = Depends(_require_auth)):
+    """Return connector type metadata (for building config modals in the UI)."""
+    from rag_assistant.connectors.registry import CONNECTOR_METADATA
+    return CONNECTOR_METADATA
+
+
+@app.get("/admin/connectors")
+def admin_list_connectors(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    rows = list_connectors(tenant_id=tid)
+    # Mask secret fields in config before returning
+    result = []
+    for row in rows:
+        r = dict(row)
+        try:
+            import json as _json
+            cfg = _json.loads(r.get("config") or "{}")
+            # Redact any key with "token", "secret", "key", "json", "password"
+            for k in list(cfg.keys()):
+                kl = k.lower()
+                if any(s in kl for s in ("token", "secret", "key", "json", "password")):
+                    cfg[k] = "••••••••"
+            r["config"] = cfg
+        except Exception:
+            r["config"] = {}
+        result.append(r)
+    return result
+
+
+@app.post("/admin/connectors/{connector_type}")
+def admin_upsert_connector(
+    connector_type: str,
+    request: ConnectorConfig,
+    user: dict = Depends(_require_auth),
+):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from rag_assistant.connectors.registry import CONNECTOR_REGISTRY
+    if connector_type not in CONNECTOR_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Unknown connector type: {connector_type}")
+
+    tid = _get_tenant_id(user)
+    import json as _json
+    config_str = _json.dumps(request.config)
+    conn = upsert_connector(
+        tenant_id=tid,
+        connector_type=connector_type,
+        name=request.name,
+        config=config_str,
+        sync_interval_minutes=request.sync_interval_minutes,
+    )
+    return {"status": "saved", "id": conn["id"]}
+
+
+@app.post("/admin/connectors/{connector_type}/test")
+def admin_test_connector(
+    connector_type: str,
+    request: ConnectorConfig,
+    user: dict = Depends(_require_auth),
+):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    from rag_assistant.connectors.registry import get_connector_instance
+    tid = _get_tenant_id(user)
+    try:
+        instance = get_connector_instance(connector_type, request.config, tid)
+        result = instance.test_connection()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        return {"ok": False, "message": str(exc)}
+
+
+@app.post("/admin/connectors/{connector_type}/sync")
+def admin_sync_connector(connector_type: str, user: dict = Depends(_require_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    tid = _get_tenant_id(user)
+    conn = get_connector(tid, connector_type)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connector not configured")
+
+    def _bg():
+        from rag_assistant.sync_engine import trigger_sync
+        trigger_sync(conn["id"])
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return {"status": "sync_started", "connector": conn["name"]}
+
+
+@app.delete("/admin/connectors/{connector_type}")
+def admin_delete_connector(connector_type: str, user: dict = Depends(_require_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    tid = _get_tenant_id(user)
+    conn = get_connector(tid, connector_type)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connector not found")
+    delete_connector(conn["id"])
+    return {"status": "deleted"}
+
+
+# ---------------------------------------------------------------------------
+# MCP server (model context protocol)
+# ---------------------------------------------------------------------------
+
+try:
+    from fastapi_mcp import FastApiMCP
+    mcp = FastApiMCP(app)
+    mcp.mount()
+    logger.info("MCP server mounted at /mcp")
+except Exception as _mcp_exc:
+    logger.warning("fastapi-mcp not available, MCP endpoint disabled: %s", _mcp_exc)
 
 
 # Mount frontend AFTER all API routes so API paths take priority
