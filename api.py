@@ -30,6 +30,7 @@ from rag_assistant.db import (
     create_invite, get_invite_by_token, accept_invite, update_tenant_user_tenant,
     upsert_connector, get_connector, get_connector_by_id, list_connectors,
     update_connector_status, delete_connector,
+    block_user, is_user_blocked, log_audit, get_audit_log,
 )
 from rag_assistant.retriever import retrieve
 from rag_assistant.query_rewriter import rewrite_query
@@ -187,8 +188,11 @@ def _require_auth(
         token = authorization[7:]
         payload = decode_token(token)
         if payload:
+            uid = payload.get("sub")
+            if uid and is_user_blocked(uid):
+                raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account deleted")
             return {
-                "user_id": payload.get("sub"),
+                "user_id": uid,
                 "username": payload.get("username"),
                 "role": payload.get("role"),
                 "tenant_id": payload.get("tenant_id", "default"),
@@ -356,9 +360,9 @@ def auth_register(request: RegisterRequest):
 
 
 @app.post("/auth/login")
-def auth_login(request: LoginRequest):
-    user = get_user_by_email_or_username(request.email)
-    if not user or not verify_password(request.password, user["password_hash"]):
+def auth_login(login_req: LoginRequest, request: Request):
+    user = get_user_by_email_or_username(login_req.email)
+    if not user or not verify_password(login_req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     update_last_login(user["id"])
     tenant_id = user.get("tenant_id") or ""
@@ -367,12 +371,17 @@ def auth_login(request: LoginRequest):
         tenant_id=tenant_id,
         display_name=user.get("display_name") or user["username"],
     )
-    # Enrich with tenant name
     tenant_name = None
     if tenant_id:
         t = get_tenant(tenant_id)
         if t:
             tenant_name = t["name"]
+    ip = request.client.host if request.client else None
+    try:
+        log_audit(tenant_id or "default", user["id"], "login",
+                  resource_type="user", resource_id=user["id"], ip_address=ip)
+    except Exception:
+        pass
     return {
         "token": token,
         "username": user["username"],
@@ -474,6 +483,57 @@ def auth_accept_invite(request: AcceptInviteRequest, user: dict = Depends(_requi
         "tenant_name": tenant["name"] if tenant else None,
         "role": invite["role"],
     }
+
+
+@app.delete("/account")
+def delete_account(request: Request, user: dict = Depends(_require_auth)):
+    """GDPR right to erasure — deletes all data for the current user."""
+    uid = _get_uid(user)
+    if not uid:
+        raise HTTPException(status_code=400, detail="Requires JWT login")
+
+    tid = _get_tenant_id(user)
+    ip = request.client.host if request.client else None
+
+    # 1. Collect chat IDs before deleting
+    with get_conn() as conn:
+        chat_rows = conn.execute(
+            "SELECT id FROM chats WHERE user_id=?", (uid,)
+        ).fetchall()
+    chat_ids = [r[0] for r in chat_rows]
+
+    # 2. Delete session chunks from Chroma
+    try:
+        col_name = get_collection_name(tid)
+        chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
+        collection = chroma_client.get_or_create_collection(name=col_name)
+        for cid in chat_ids:
+            res = collection.get(where={"session_id": {"$eq": cid}}, include=[])
+            if res["ids"]:
+                collection.delete(ids=res["ids"])
+    except Exception as exc:
+        logger.warning("GDPR: could not delete Chroma chunks for user %s: %s", uid, exc)
+
+    # 3. Log audit before user record is gone
+    try:
+        log_audit(tid, uid, "account_delete", resource_type="user", resource_id=uid,
+                  ip_address=ip, details={"chat_count": len(chat_ids)})
+    except Exception:
+        pass
+
+    # 4. Delete chats + messages (cascades via FK) and user record
+    with get_conn() as conn:
+        conn.execute("DELETE FROM chats WHERE user_id=?", (uid,))
+        # Delete query logs associated with user's chats
+        if chat_ids:
+            placeholders = ",".join("?" * len(chat_ids))
+            conn.execute(f"DELETE FROM query_logs WHERE chat_id IN ({placeholders})", chat_ids)
+        conn.execute("DELETE FROM users WHERE id=?", (uid,))
+
+    # 5. Block the JWT so subsequent requests fail immediately
+    block_user(uid)
+
+    return {"deleted": True, "user_id": uid}
 
 
 @app.put("/auth/profile")
@@ -643,7 +703,8 @@ def index(user: dict = Depends(_require_auth)):
 
 
 @app.post("/upload")
-async def upload(file: UploadFile = File(...), user: dict = Depends(_require_auth)):
+async def upload(file: UploadFile = File(...), request: Request = None,
+                 user: dict = Depends(_require_auth)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Only admins can upload to the Knowledge Base")
 
@@ -651,6 +712,14 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(_require_aut
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     tid = _get_tenant_id(user)
+    uid = _get_uid(user)
+    ip = request.client.host if request and request.client else None
+    try:
+        log_audit(tid, uid or "api", "document_upload", resource_type="document",
+                  resource_id=file.filename, ip_address=ip,
+                  details={"filename": file.filename})
+    except Exception:
+        pass
     dest = DATA_DIR / file.filename
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -679,9 +748,15 @@ async def upload(file: UploadFile = File(...), user: dict = Depends(_require_aut
 
 
 @app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest, user: dict = Depends(_require_auth)):
+def query(request: QueryRequest, http_req: Request, user: dict = Depends(_require_auth)):
     uid = _get_uid(user)
     tid = _get_tenant_id(user)
+    ip = http_req.client.host if http_req.client else None
+    try:
+        log_audit(tid, uid or "anon", "query", resource_type="knowledge_base",
+                  ip_address=ip, details={"question_preview": request.question[:80]})
+    except Exception:
+        pass
     active_chat_id = request.chat_id
     if active_chat_id == "new":
         chat = create_chat(user_id=uid, tenant_id=tid if tid else None)
@@ -911,8 +986,11 @@ def admin_stats(user: dict = Depends(_require_auth)):
 
 
 @app.delete("/admin/documents", dependencies=[Depends(_require_auth)])
-def delete_global_document_by_param(filename: str = Query(...), user: dict = Depends(_require_auth)):
+def delete_global_document_by_param(filename: str = Query(...), request: Request = None,
+                                     user: dict = Depends(_require_auth)):
     tid = _get_tenant_id(user)
+    uid = _get_uid(user)
+    ip = request.client.host if request and request.client else None
     col_name = get_collection_name(tid)
     try:
         chroma_client = chromadb.PersistentClient(path=CHROMA_DIR)
@@ -921,6 +999,12 @@ def delete_global_document_by_param(filename: str = Query(...), user: dict = Dep
         if not results["ids"]:
             raise HTTPException(status_code=404, detail=f"{filename} not found")
         collection.delete(ids=results["ids"])
+        try:
+            log_audit(tid, uid or "api", "document_delete", resource_type="document",
+                      resource_id=filename, ip_address=ip,
+                      details={"chunks_removed": len(results["ids"])})
+        except Exception:
+            pass
         return {"deleted": filename, "chunks_removed": len(results["ids"])}
     except HTTPException:
         raise
@@ -1085,6 +1169,14 @@ def admin_feedback():
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/audit-log")
+def admin_audit_log(limit: int = 100, user: dict = Depends(_require_auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    tid = _get_tenant_id(user)
+    return get_audit_log(tid, limit=limit)
 
 
 @app.get("/admin/analytics", dependencies=[Depends(_require_auth)])
@@ -1306,6 +1398,12 @@ def admin_upsert_connector(
         config=config_str,
         sync_interval_minutes=request.sync_interval_minutes,
     )
+    uid = _get_uid(user)
+    try:
+        log_audit(tid, uid or "api", "connector_configure", resource_type="connector",
+                  resource_id=connector_type, details={"name": request.name})
+    except Exception:
+        pass
     return {"status": "saved", "id": conn["id"]}
 
 

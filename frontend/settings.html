@@ -535,6 +535,40 @@
           </div>
         </div>
       </div>
+
+      <div class="setting-row" style="border-top:1px solid #2a2a2e;margin-top:8px;padding-top:20px;border-bottom:none;">
+        <div>
+          <div class="setting-label" style="color:#f87171;">Delete Account</div>
+          <div class="setting-desc">Permanently erases all your data. This cannot be undone.</div>
+        </div>
+        <div class="setting-control">
+          <button class="btn btn-danger" onclick="showDeleteAccountModal()">Delete My Account</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DELETE ACCOUNT MODAL -->
+    <div id="delete-account-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100;align-items:center;justify-content:center;">
+      <div style="background:#141414;border:1px solid #3f3f46;border-radius:14px;padding:32px;width:420px;max-width:95vw;">
+        <div style="font-size:18px;font-weight:700;color:#f87171;margin-bottom:8px;">Delete Account</div>
+        <div style="font-size:13px;color:#a1a1aa;line-height:1.6;margin-bottom:20px;">
+          This will permanently delete all your chats, messages, documents, and your user account.
+          This action <strong style="color:#f4f4f5;">cannot be undone</strong>.
+        </div>
+        <div style="font-size:13px;color:#71717a;margin-bottom:8px;">Type <strong style="color:#f4f4f5;">DELETE</strong> to confirm:</div>
+        <input type="text" id="delete-confirm-input"
+          style="width:100%;padding:9px 12px;background:#0f0f10;border:1px solid #3f3f46;border-radius:8px;font-size:13px;font-family:inherit;color:#f4f4f5;outline:none;margin-bottom:16px;"
+          placeholder="Type DELETE here" oninput="checkDeleteConfirm(this.value)" />
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button onclick="closeDeleteAccountModal()"
+            style="padding:8px 18px;background:none;border:1px solid #3f3f46;border-radius:8px;font-size:13px;color:#a1a1aa;cursor:pointer;font-family:inherit;">Cancel</button>
+          <button id="delete-account-btn" disabled onclick="deleteAccount()"
+            style="padding:8px 18px;background:#7f1d1d;border:1px solid rgba(239,68,68,0.3);border-radius:8px;font-size:13px;font-weight:600;color:#fca5a5;cursor:not-allowed;font-family:inherit;opacity:0.5;transition:all 0.15s;">
+            Delete Everything
+          </button>
+        </div>
+        <div id="delete-account-error" style="color:#f87171;font-size:13px;margin-top:10px;display:none;"></div>
+      </div>
     </div>
 
     <!-- SECURITY -->
@@ -845,6 +879,58 @@
     }).catch(function() {
       alert("Could not copy — please copy manually: " + _lastInviteLink);
     });
+  }
+
+  // ===== DELETE ACCOUNT =====
+  function showDeleteAccountModal() {
+    document.getElementById("delete-confirm-input").value = "";
+    document.getElementById("delete-account-btn").disabled = true;
+    document.getElementById("delete-account-btn").style.opacity = "0.5";
+    document.getElementById("delete-account-btn").style.cursor = "not-allowed";
+    document.getElementById("delete-account-error").style.display = "none";
+    document.getElementById("delete-account-modal").style.display = "flex";
+  }
+
+  function closeDeleteAccountModal() {
+    document.getElementById("delete-account-modal").style.display = "none";
+  }
+
+  function checkDeleteConfirm(value) {
+    var btn = document.getElementById("delete-account-btn");
+    var ok = value.trim() === "DELETE";
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? "1" : "0.5";
+    btn.style.cursor = ok ? "pointer" : "not-allowed";
+    btn.style.background = ok ? "#991b1b" : "#7f1d1d";
+  }
+
+  async function deleteAccount() {
+    var errEl = document.getElementById("delete-account-error");
+    errEl.style.display = "none";
+    var btn = document.getElementById("delete-account-btn");
+    btn.disabled = true;
+    btn.textContent = "Deleting...";
+    try {
+      var res = await fetch(BASE + "/account", { method: "DELETE", headers: getAuth() });
+      var data = await res.json().catch(function() { return {}; });
+      if (!res.ok) {
+        errEl.textContent = data.detail || "Deletion failed. Please try again.";
+        errEl.style.display = "block";
+        btn.disabled = false;
+        btn.textContent = "Delete Everything";
+        return;
+      }
+      // Clear all local state and redirect
+      localStorage.removeItem("crag_token");
+      localStorage.removeItem("crag_user");
+      localStorage.removeItem("crag_settings");
+      window.location.replace("/login");
+    } catch(e) {
+      errEl.textContent = "Network error. Please try again.";
+      errEl.style.display = "block";
+      btn.disabled = false;
+      btn.textContent = "Delete Everything";
+    }
   }
 
   // ===== INIT =====

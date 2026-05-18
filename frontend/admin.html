@@ -706,6 +706,38 @@
     .fb-summary-pill.good { background: #dcfce7; color: #166534; }
     .fb-summary-pill.bad  { background: #fee2e2; color: #991b1b; }
 
+    /* ===== AUDIT LOG ===== */
+    .action-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 99px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+
+    .action-badge.login            { background: #dbeafe; color: #1d4ed8; }
+    .action-badge.query            { background: #f4f4f5; color: #52525b; }
+    .action-badge.document_upload  { background: #dcfce7; color: #166534; }
+    .action-badge.document_delete  { background: #fee2e2; color: #991b1b; }
+    .action-badge.connector_configure { background: #ede9fe; color: #6d28d9; }
+    .action-badge.account_delete   { background: #fee2e2; color: #7f1d1d; font-weight: 900; }
+    .action-badge.default          { background: #f4f4f5; color: #71717a; }
+
+    .audit-details-btn {
+      background: none;
+      border: 1px solid #e4e4e7;
+      border-radius: 5px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: #71717a;
+      cursor: pointer;
+    }
+
+    .audit-details-btn:hover { background: #f4f4f5; }
+
     /* ===== CONNECTORS ===== */
     .connector-grid {
       display: grid;
@@ -892,6 +924,9 @@
     <button class="nav-btn" data-tab="logs" onclick="switchTab('logs')">
       <span class="nav-icon">&#128203;</span> Logs
     </button>
+    <button class="nav-btn" data-tab="auditlog" onclick="switchTab('auditlog')">
+      <span class="nav-icon">&#128274;</span> Audit Log
+    </button>
     <button class="nav-btn" data-tab="feedback" onclick="switchTab('feedback')">
       <span class="nav-icon">&#127775;</span> Feedback
     </button>
@@ -1048,7 +1083,7 @@
         </div>
       </div>
 
-      <div class="stats-grid">
+      <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);">
         <div class="stat-card">
           <div class="sc-value" id="an-good-fb">—</div>
           <div class="sc-label">Good Feedback</div>
@@ -1065,6 +1100,15 @@
           <div class="sc-value" id="an-cache-misses">—</div>
           <div class="sc-label">Cache Misses</div>
         </div>
+        <div class="stat-card">
+          <div class="sc-value" id="an-satisfaction">—</div>
+          <div class="sc-label">Satisfaction Rate</div>
+        </div>
+      </div>
+
+      <div class="section-block" style="margin-top:20px;">
+        <div class="sb-header"><div class="sb-title">Top Questions</div></div>
+        <div id="an-top-questions"><div class="loading-msg">Loading...</div></div>
       </div>
     </div>
 
@@ -1113,6 +1157,20 @@
         </div>
         <div style="font-size:12px;color:#71717a;margin-bottom:14px;">Showing last 7 days &mdash; logs are automatically purged after 7 days.</div>
         <div id="logs-table-wrap"><div class="loading-msg">Loading...</div></div>
+      </div>
+    </div>
+
+    <!-- TAB: AUDIT LOG -->
+    <div id="tab-auditlog" class="tab-panel">
+      <div class="section-block">
+        <div class="sb-header">
+          <div>
+            <div class="sb-title">Audit Log</div>
+            <div style="font-size:12px;color:#71717a;margin-top:2px;">Security and compliance record of all actions in your workspace</div>
+          </div>
+          <button class="sb-btn-outline" onclick="loadAuditLogTab()">&#8635; Refresh</button>
+        </div>
+        <div id="audit-log-wrap"><div class="loading-msg">Loading...</div></div>
       </div>
     </div>
 
@@ -1212,6 +1270,7 @@
     sessions: "Sessions",
     querytester: "Query Tester",
     logs: "Logs",
+    auditlog: "Audit Log",
     feedback: "Feedback",
     users: "Users",
     connectors: "Connectors",
@@ -1277,6 +1336,7 @@
     else if (tab === "sessions") loadSessionsTab();
     else if (tab === "querytester") loadQueryTesterSessions();
     else if (tab === "logs") loadLogsTab();
+    else if (tab === "auditlog") loadAuditLogTab();
     else if (tab === "feedback") loadFeedbackTab();
     else if (tab === "users") loadUsersTab();
     else if (tab === "connectors") loadConnectorsTab();
@@ -1803,6 +1863,28 @@
       document.getElementById("an-bad-fb").textContent = d.feedback_bad || 0;
       document.getElementById("an-cache-hits").textContent = d.cache_hits || 0;
       document.getElementById("an-cache-misses").textContent = (d.total_queries || 0) - (d.cache_hits || 0);
+      var satEl = document.getElementById("an-satisfaction");
+      if (satEl) {
+        satEl.textContent = d.satisfaction_rate != null ? d.satisfaction_rate + "%" : "N/A";
+        satEl.style.color = d.satisfaction_rate != null && d.satisfaction_rate >= 70 ? "#16a34a" : "#71717a";
+      }
+
+      // Top Questions
+      var tqContainer = document.getElementById("an-top-questions");
+      if (tqContainer) {
+        var tqs = d.top_questions || [];
+        if (!tqs.length) {
+          tqContainer.innerHTML = '<div class="empty-table-msg">No queries yet.</div>';
+        } else {
+          var tqHtml = '<table class="admin-table"><thead><tr><th>Question</th><th style="text-align:right;">Times Asked</th></tr></thead><tbody>';
+          tqs.forEach(function(q) {
+            tqHtml += '<tr><td style="max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(q.question) + '">' + esc(q.question) + '</td>' +
+              '<td style="text-align:right;font-weight:600;color:var(--accent);">' + q.count + '</td></tr>';
+          });
+          tqHtml += '</tbody></table>';
+          tqContainer.innerHTML = tqHtml;
+        }
+      }
 
       // Bar chart — queries per day
       var days = (d.queries_by_day || []).map(function(r) { return r.day; });
@@ -1922,6 +2004,82 @@
     } catch(e) {
       showToast("Failed: " + e.message, "error");
     }
+  }
+
+  // ===== AUDIT LOG TAB =====
+  var _auditRefreshTimer = null;
+
+  async function loadAuditLogTab() {
+    var container = document.getElementById("audit-log-wrap");
+    container.innerHTML = '<div class="loading-msg">Loading...</div>';
+    try {
+      var res = await fetch(BASE + "/admin/audit-log?limit=100", { headers: getAuth() });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var logs = await res.json();
+
+      if (!logs.length) {
+        container.innerHTML = '<div class="empty-table-msg">No audit events yet.</div>';
+        return;
+      }
+
+      var ACTION_BADGE_CLASSES = {
+        "login": "login", "query": "query",
+        "document_upload": "document_upload", "document_delete": "document_delete",
+        "connector_configure": "connector_configure", "account_delete": "account_delete",
+      };
+
+      var html = '<table class="admin-table"><thead><tr>' +
+        '<th>Time</th><th>User</th><th>Action</th><th>Resource</th><th>IP Address</th><th>Details</th>' +
+        '</tr></thead><tbody>';
+
+      logs.forEach(function(row, idx) {
+        var action = row.action || "unknown";
+        var badgeCls = ACTION_BADGE_CLASSES[action] || "default";
+        var ts = fmtDateTime(row.created_at);
+        var user = row.user_id ? row.user_id.slice(0, 8) + "…" : "—";
+        var resource = [row.resource_type, row.resource_id].filter(Boolean).join(": ") || "—";
+        var ip = row.ip_address || "—";
+        var hasDetails = row.details && typeof row.details === "object" && Object.keys(row.details).length > 0;
+        var detailsBtn = hasDetails
+          ? '<button class="audit-details-btn" onclick="toggleAuditDetails(' + idx + ')">JSON</button>'
+          : '—';
+        var detailsJson = hasDetails ? JSON.stringify(row.details, null, 2) : "";
+
+        html += '<tr>' +
+          '<td style="white-space:nowrap;color:#71717a;">' + esc(ts) + '</td>' +
+          '<td style="font-family:monospace;font-size:11px;color:#71717a;" title="' + esc(row.user_id || "") + '">' + esc(user) + '</td>' +
+          '<td><span class="action-badge ' + badgeCls + '">' + esc(action) + '</span></td>' +
+          '<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:#3f3f46;" title="' + esc(resource) + '">' + esc(resource) + '</td>' +
+          '<td style="font-size:12px;color:#71717a;">' + esc(ip) + '</td>' +
+          '<td>' + detailsBtn + '</td>' +
+          '</tr>';
+
+        if (hasDetails) {
+          html += '<tr id="audit-details-' + idx + '" style="display:none;">' +
+            '<td colspan="6" style="padding:8px 10px;">' +
+            '<pre style="font-size:11px;background:#f9f9f9;border-radius:6px;padding:8px 10px;overflow-x:auto;color:#3f3f46;border:1px solid #e4e4e7;">' +
+            esc(detailsJson) + '</pre></td></tr>';
+        }
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+
+      // Auto-refresh every 30 seconds
+      if (_auditRefreshTimer) clearTimeout(_auditRefreshTimer);
+      _auditRefreshTimer = setTimeout(function() {
+        var active = document.querySelector('[data-tab="auditlog"]');
+        if (active && active.classList.contains("active")) loadAuditLogTab();
+      }, 30000);
+
+    } catch(e) {
+      container.innerHTML = '<div class="empty-table-msg">Failed to load audit log.</div>';
+    }
+  }
+
+  function toggleAuditDetails(idx) {
+    var row = document.getElementById("audit-details-" + idx);
+    if (row) row.style.display = row.style.display === "none" ? "table-row" : "none";
   }
 
   // ===== CONNECTORS TAB =====

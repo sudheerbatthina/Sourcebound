@@ -44,7 +44,21 @@
       "PowerShell(cd c:\\\\Users\\\\sudhe\\\\projects\\\\rag-assistant; Start-Process -FilePath \"python\" -ArgumentList \"-m uvicorn api:app --host 127.0.0.1 --port 8000\" -RedirectStandardOutput \"$env:TEMP\\\\rag2_out.txt\" -RedirectStandardError \"$env:TEMP\\\\rag2_err.txt\" -NoNewWindow; Start-Sleep 6; Get-Content \"$env:TEMP\\\\rag2_err.txt\" -ErrorAction SilentlyContinue | Select-Object -Last 20)",
       "PowerShell(Get-Content \"$env:TEMP\\\\rag2_err.txt\" 2>$null | Select-Object -Last 20)",
       "PowerShell(Get-Content \"$env:TEMP\\\\rag2_err.txt\")",
-      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/mcp\" -TimeoutSec 3 -ErrorAction Stop; Write-Host \"MCP status: $\\($r.StatusCode\\)\" } catch { Write-Host \"MCP response: $\\($_.Exception.Message.Split\\(':'\\)[0]\\)\" })"
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://localhost:8000/mcp\" -TimeoutSec 3 -ErrorAction Stop; Write-Host \"MCP status: $\\($r.StatusCode\\)\" } catch { Write-Host \"MCP response: $\\($_.Exception.Message.Split\\(':'\\)[0]\\)\" })",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep 1; Write-Host \"old server stopped\")",
+      "PowerShell(cd c:\\\\Users\\\\sudhe\\\\projects\\\\rag-assistant; Start-Process -FilePath \"python\" -ArgumentList \"-m uvicorn api:app --host 127.0.0.1 --port 8000\" -RedirectStandardOutput \"$env:TEMP\\\\rag3_out.txt\" -RedirectStandardError \"$env:TEMP\\\\rag3_err.txt\" -NoNewWindow; Start-Sleep 6; Get-Content \"$env:TEMP\\\\rag3_err.txt\" | Select-Object -Last 12)",
+      "PowerShell(Get-Content \"$env:TEMP\\\\rag3_err.txt\" | Select-Object -Last 12)",
+      "PowerShell(Start-Sleep 4; [System.IO.File]::ReadAllText\\(\"$env:TEMP\\\\rag3_err.txt\"\\) | Select-String \".\" | Select-Object -Last 15)",
+      "PowerShell(node --version)",
+      "PowerShell(npx --version)",
+      "PowerShell(Get-Content \"$env:APPDATA\\\\Claude\\\\claude_desktop_config.json\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem \"$env:APPDATA\\\\Claude\\\\logs\\\\\" -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-ChildItem \"$env:APPDATA\\\\Claude\\\\\" -ErrorAction SilentlyContinue)",
+      "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp/sse\" --verbose 2>&1)",
+      "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/health\" --verbose 2>&1)",
+      "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" --verbose 2>&1)",
+      "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" -X POST -H \"Content-Type: application/json\" -d \"{}\" --verbose 2>&1)",
+      "Read(//c/Users/sudhe/AppData/Roaming/Claude/**)"
     ]
   }
 }

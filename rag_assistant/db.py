@@ -98,6 +98,23 @@ def init_db():
                 created_at TEXT NOT NULL,
                 last_login TEXT
             );
+            CREATE TABLE IF NOT EXISTS token_blocklist (
+                user_id TEXT PRIMARY KEY,
+                blocked_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT,
+                user_id TEXT,
+                action TEXT NOT NULL,
+                resource_type TEXT,
+                resource_id TEXT,
+                ip_address TEXT,
+                details TEXT,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS connectors (
                 id TEXT PRIMARY KEY,
                 tenant_id TEXT,
@@ -456,66 +473,123 @@ def list_users() -> list:
 
 
 def get_analytics(tenant_id: str = None) -> dict:
-    """Return usage analytics. Optionally filter by tenant_id."""
+    """Return usage analytics, optionally filtered by tenant_id."""
+    where = "WHERE tenant_id=?" if tenant_id else ""
+    and_ = "AND" if tenant_id else "WHERE"
+    params = (tenant_id,) if tenant_id else ()
+
     with get_conn() as conn:
-        if tenant_id:
-            total_queries = conn.execute(
-                "SELECT COUNT(*) FROM query_logs WHERE tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-            cache_hits = conn.execute(
-                "SELECT COUNT(*) FROM query_logs WHERE from_cache=1 AND tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-            avg_latency = conn.execute(
-                "SELECT AVG(latency_ms) FROM query_logs WHERE from_cache=0 AND tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-            avg_faithfulness = conn.execute(
-                "SELECT AVG(faithfulness_score) FROM query_logs "
-                "WHERE faithfulness_score IS NOT NULL AND tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-            queries_by_day = conn.execute(
-                """SELECT substr(created_at,1,10) as day, COUNT(*) as count
-                   FROM query_logs
-                   WHERE created_at >= datetime('now','-7 days') AND tenant_id=?
-                   GROUP BY day ORDER BY day ASC""",
-                (tenant_id,)
-            ).fetchall()
-            feedback_good = conn.execute(
-                "SELECT COUNT(*) FROM feedback WHERE rating=1 AND tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-            feedback_bad = conn.execute(
-                "SELECT COUNT(*) FROM feedback WHERE rating=-1 AND tenant_id=?", (tenant_id,)
-            ).fetchone()[0]
-        else:
-            total_queries = conn.execute(
-                "SELECT COUNT(*) FROM query_logs").fetchone()[0]
-            cache_hits = conn.execute(
-                "SELECT COUNT(*) FROM query_logs WHERE from_cache=1").fetchone()[0]
-            avg_latency = conn.execute(
-                "SELECT AVG(latency_ms) FROM query_logs "
-                "WHERE from_cache=0").fetchone()[0]
-            avg_faithfulness = conn.execute(
-                "SELECT AVG(faithfulness_score) FROM query_logs "
-                "WHERE faithfulness_score IS NOT NULL").fetchone()[0]
-            queries_by_day = conn.execute(
-                """SELECT substr(created_at,1,10) as day, COUNT(*) as count
-                   FROM query_logs
-                   WHERE created_at >= datetime('now','-7 days')
-                   GROUP BY day ORDER BY day ASC"""
-            ).fetchall()
-            feedback_good = conn.execute(
-                "SELECT COUNT(*) FROM feedback WHERE rating=1").fetchone()[0]
-            feedback_bad = conn.execute(
-                "SELECT COUNT(*) FROM feedback WHERE rating=-1").fetchone()[0]
+        total_queries = conn.execute(
+            f"SELECT COUNT(*) FROM query_logs {where}", params
+        ).fetchone()[0]
+
+        cache_hits = conn.execute(
+            f"SELECT COUNT(*) FROM query_logs {where} {and_} from_cache=1", params
+        ).fetchone()[0]
+
+        avg_latency = conn.execute(
+            f"SELECT AVG(latency_ms) FROM query_logs {where} {and_} from_cache=0", params
+        ).fetchone()[0]
+
+        avg_faithfulness = conn.execute(
+            f"SELECT AVG(faithfulness_score) FROM query_logs {where} "
+            f"{and_} faithfulness_score IS NOT NULL", params
+        ).fetchone()[0]
+
+        queries_by_day = conn.execute(
+            f"""SELECT substr(created_at,1,10) as day, COUNT(*) as count
+               FROM query_logs {where} {and_} created_at >= datetime('now','-7 days')
+               GROUP BY day ORDER BY day ASC""",
+            params
+        ).fetchall()
+
+        top_questions = conn.execute(
+            f"""SELECT question, COUNT(*) as count FROM query_logs {where}
+               GROUP BY question ORDER BY count DESC LIMIT 10""",
+            params
+        ).fetchall()
+
+        feedback_good = conn.execute(
+            f"SELECT COUNT(*) FROM feedback {where} {and_} rating=1", params
+        ).fetchone()[0]
+
+        feedback_bad = conn.execute(
+            f"SELECT COUNT(*) FROM feedback {where} {and_} rating=-1", params
+        ).fetchone()[0]
+
+    total_fb = feedback_good + feedback_bad
     return {
         "total_queries": total_queries,
         "cache_hits": cache_hits,
         "cache_hit_rate": round(cache_hits / total_queries * 100, 1) if total_queries else 0,
-        "avg_latency_ms": round(avg_latency or 0, 0),
+        "avg_latency_ms": round(avg_latency or 0),
         "avg_faithfulness": round(avg_faithfulness or 0, 1),
         "queries_by_day": [{"day": r[0], "count": r[1]} for r in queries_by_day],
+        "top_questions": [{"question": r[0][:60], "count": r[1]} for r in top_questions],
         "feedback_good": feedback_good,
         "feedback_bad": feedback_bad,
+        "satisfaction_rate": round(feedback_good / total_fb * 100) if total_fb > 0 else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Token blocklist (GDPR erasure)
+# ---------------------------------------------------------------------------
+
+def block_user(user_id: str) -> None:
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO token_blocklist VALUES (?,?)",
+            (user_id, now)
+        )
+
+
+def is_user_blocked(user_id: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM token_blocklist WHERE user_id=?", (user_id,)
+        ).fetchone()
+    return row is not None
+
+
+# ---------------------------------------------------------------------------
+# Audit log
+# ---------------------------------------------------------------------------
+
+def log_audit(tenant_id: str, user_id: str, action: str,
+              resource_type: str = None, resource_id: str = None,
+              ip_address: str = None, details: dict = None) -> None:
+    import json as _json
+    now = datetime.utcnow().isoformat()
+    aid = str(uuid.uuid4())
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO audit_log VALUES (?,?,?,?,?,?,?,?,?)",
+            (aid, tenant_id, user_id, action, resource_type,
+             resource_id, ip_address,
+             _json.dumps(details) if details else None, now)
+        )
+
+
+def get_audit_log(tenant_id: str, limit: int = 100) -> list:
+    import json as _json
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT * FROM audit_log WHERE tenant_id=?
+               ORDER BY created_at DESC LIMIT ?""",
+            (tenant_id, limit)
+        ).fetchall()
+    result = []
+    for row in rows:
+        d = dict(row)
+        if d.get("details"):
+            try:
+                d["details"] = _json.loads(d["details"])
+            except Exception:
+                pass
+        result.append(d)
+    return result
 
 
 # ---------------------------------------------------------------------------
