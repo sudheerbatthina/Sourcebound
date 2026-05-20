@@ -706,7 +706,23 @@ def get_chat_documents(chat_id: str, user: dict = Depends(_require_auth)):
         for meta in results["metadatas"]:
             src = meta.get("source", "unknown")
             counts[src] = counts.get(src, 0) + 1
-        return [{"source": src, "chunk_count": cnt} for src, cnt in sorted(counts.items())]
+
+        docs = {
+            src: {"source": src, "chunk_count": cnt, "status": "ready"}
+            for src, cnt in counts.items()
+        }
+
+        session_dir = STORAGE_DIR / "sessions" / chat_id
+        if session_dir.exists():
+            for pdf_path in sorted(session_dir.glob("*.pdf")):
+                if pdf_path.name not in docs:
+                    docs[pdf_path.name] = {
+                        "source": pdf_path.name,
+                        "chunk_count": 0,
+                        "status": "indexing",
+                    }
+
+        return [docs[src] for src in sorted(docs)]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
