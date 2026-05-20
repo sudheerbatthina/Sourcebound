@@ -49,6 +49,7 @@ app.add_middleware(
 )
 
 _session_upload_status: dict[tuple[str, str], dict] = {}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Startup
@@ -672,7 +673,14 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
 
     try:
         contents = await file.read()
+        if len(contents) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="File too large. Maximum upload size is 10 MB.",
+            )
         dest.write_bytes(contents)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
 
@@ -817,7 +825,14 @@ async def upload(file: UploadFile = File(...), request: Request = None,
 
     try:
         contents = await file.read()
+        if len(contents) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="File too large. Maximum upload size is 10 MB.",
+            )
         dest.write_bytes(contents)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
 

@@ -136,7 +136,7 @@ def init_db():
                 user_id TEXT NOT NULL,
                 uploads_used INTEGER NOT NULL DEFAULT 0,
                 queries_used INTEGER NOT NULL DEFAULT 0,
-                uploads_limit INTEGER NOT NULL DEFAULT 1,
+                uploads_limit INTEGER NOT NULL DEFAULT 2,
                 queries_limit INTEGER NOT NULL DEFAULT 5,
                 period_start TEXT NOT NULL,
                 period_end TEXT NOT NULL,
@@ -564,7 +564,7 @@ def _current_usage_period() -> tuple[str, str, str]:
 
 def _limits_for_plan(plan: str) -> dict:
     return {
-        'free': {'uploads': 1, 'queries': 5},
+        'free': {'uploads': 2, 'queries': 5},
         'pro': {'uploads': 50, 'queries': 500},
         'team': {'uploads': 200, 'queries': 2000},
         'enterprise': {'uploads': 999999, 'queries': 999999},
@@ -583,15 +583,30 @@ def get_or_create_usage(tenant_id: str, user_id: str) -> dict:
             (tenant_id, user_id, period_start)
         ).fetchone()
 
-        if row:
-            return dict(row)
-
         tenant = conn.execute(
             "SELECT plan FROM tenants WHERE id=?",
             (tenant_id,)
         ).fetchone()
         plan = tenant['plan'] if tenant else 'free'
         limits = _limits_for_plan(plan)
+
+        if row:
+            if (row['uploads_limit'] != limits['uploads']
+                    or row['queries_limit'] != limits['queries']):
+                conn.execute(
+                    """UPDATE usage_limits
+                       SET uploads_limit=?, queries_limit=?, updated_at=?
+                       WHERE tenant_id=? AND user_id=? AND period_start=?""",
+                    (limits['uploads'], limits['queries'], now_iso,
+                     tenant_id, user_id, period_start)
+                )
+                row = conn.execute(
+                    """SELECT * FROM usage_limits
+                       WHERE tenant_id=? AND user_id=?
+                       AND period_start=?""",
+                    (tenant_id, user_id, period_start)
+                ).fetchone()
+            return dict(row)
 
         existing = conn.execute(
             """SELECT * FROM usage_limits
