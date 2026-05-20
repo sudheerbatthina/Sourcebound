@@ -19,7 +19,8 @@ SYSTEM_PROMPT = (
     "You are Fetch AI, a helpful assistant that answers questions about uploaded documents and the Fetch AI app. "
     "Answer ONLY using the information in the provided context. "
     "If the context does not contain enough information to answer the question, say so explicitly. "
-    "Always cite the source document name and page number(s) you used in your answer."
+    "When you use a source, reference it inline as (Source N) where N is the source number. "
+    "Do NOT include the filename or page number inline — those will be shown separately."
 )
 
 RESEARCH_PREFIX = (
@@ -100,6 +101,24 @@ _NO_SOURCE_ANSWER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches inline citations like (Source 1), (Source 1 | file.md | page 2), [Source 1 | ...]
+_INLINE_CITATION_RE = re.compile(
+    r"[\[\(]Source\s+\d+[^\]\)]*[\]\)]",
+    re.IGNORECASE,
+)
+_CITED_INDEX_RE = re.compile(r"[\[\(]Source\s+(\d+)", re.IGNORECASE)
+
+
+def extract_cited_indices(answer: str) -> set[int]:
+    return {int(m) for m in _CITED_INDEX_RE.findall(answer)}
+
+
+def strip_inline_citations(answer: str) -> str:
+    cleaned = _INLINE_CITATION_RE.sub("", answer)
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.])", r"\1", cleaned)
+    return cleaned.strip()
+
 
 def resolve_answer_style(question: str, requested_style: str = "detailed") -> str:
     """Infer answer style from the user's latest wording, overriding UI defaults."""
@@ -122,14 +141,22 @@ def answer_uses_sources(answer: str) -> bool:
 def build_sources(hits: list[dict], answer: str) -> list[dict]:
     if not answer_uses_sources(answer):
         return []
-    return [
-        {
-            "source": h["metadata"]["source"],
+    cited = extract_cited_indices(answer)
+    seen: set[str] = set()
+    result = []
+    for i, h in enumerate(hits, start=1):
+        if cited and i not in cited:
+            continue
+        src = h["metadata"]["source"]
+        if src in seen:
+            continue
+        seen.add(src)
+        result.append({
+            "source": src,
             "page": h["metadata"]["page_number"],
             "chunk_id": h["chunk_id"],
-        }
-        for h in hits
-    ]
+        })
+    return result
 
 
 def _build_messages(
@@ -209,10 +236,13 @@ def answer_question(
     )
     latency_s = round(time.time() - t0, 3)
 
+    raw_answer = response.choices[0].message.content
+    sources = build_sources(hits, raw_answer)
+    clean_answer = strip_inline_citations(raw_answer)
     result = {
         "question": question,
-        "answer": response.choices[0].message.content,
-        "sources": build_sources(hits, response.choices[0].message.content),
+        "answer": clean_answer,
+        "sources": sources,
         "from_cache": False,
         "answer_style": effective_style,
         "tenant_id": tenant_id,
@@ -281,20 +311,21 @@ def stream_answer(
             full_answer += delta
             yield f"data: {json.dumps({'type': 'answer_chunk', 'content': delta})}\n\n"
 
-    # 5. Send sources
+    # 5. Filter sources to only those cited, strip inline citations from displayed answer
     sources = build_sources(hits, full_answer)
-    yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+    clean_answer = strip_inline_citations(full_answer)
+    yield f"data: {json.dumps({'type': 'sources', 'sources': sources, 'clean_answer': clean_answer})}\n\n"
 
     # 6. Faithfulness score (LLM-evaluated)
     faithfulness = score_faithfulness(question, full_answer, context)
     yield f"data: {json.dumps({'type': 'faithfulness', 'score': faithfulness})}\n\n"
     yield f"data: {json.dumps({'type': 'done', 'from_cache': False, 'faithfulness': faithfulness})}\n\n"
 
-    # 7. Save to semantic cache
+    # 7. Save to semantic cache (store clean answer)
     if use_cache:
         save_semantic_cache(question, {
             "question": question,
-            "answer": full_answer,
+            "answer": clean_answer,
             "sources": sources,
             "from_cache": False,
             "answer_style": effective_style,

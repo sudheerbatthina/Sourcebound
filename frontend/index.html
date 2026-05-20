@@ -1460,6 +1460,7 @@
           <button class="attach-btn" onclick="toggleAttachMenu(event)" title="Attach">+</button>
           <div id="attach-menu" class="attach-menu" style="display:none;">
             <button onclick="triggerChatFileUpload(); closeAttachMenu()">📄 Upload to this chat</button>
+            <button id="attach-kb-btn" onclick="document.getElementById('kb-file-input').click(); closeAttachMenu()">📚 Add to Knowledge Base</button>
           </div>
         </div>
         <textarea id="question-input" rows="1" placeholder="Upload anything or ask what to fetch..."></textarea>
@@ -2444,6 +2445,11 @@
       if (!answerUsesSources(contentEl.getAttribute("data-raw") || contentEl.innerText || "")) {
         sources = [];
       }
+      // Replace streamed answer with clean version (inline citations stripped server-side)
+      if (evt.clean_answer != null) {
+        contentEl.setAttribute("data-raw", evt.clean_answer);
+        contentEl.innerHTML = marked.parse(evt.clean_answer);
+      }
       onSources(sources);
       var score = groundingScore(sources);
       if (score !== null) {
@@ -2530,7 +2536,16 @@
     return { contentEl: contentEl, sourcesEl: sourcesEl, followupsEl: followupsEl, actionsEl: actionsEl, badgeEl: badgeEl };
   }
 
+  function stripInlineCitations(text) {
+    return (text || "")
+      .replace(/[\[\(]Source\s+\d+[^\]\)]*[\]\)]/gi, "")
+      .replace(/ {2,}/g, " ")
+      .replace(/\s+([,.])/g, "$1")
+      .trim();
+  }
+
   function appendBotMsg(text, sources) {
+    text = stripInlineCitations(text);
     if (!answerUsesSources(text)) {
       sources = [];
     }
