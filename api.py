@@ -686,7 +686,7 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     tid = _get_tenant_id(user)
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         allowed, usage = check_upload_limit(tid, user["user_id"])
         if not allowed:
             raise HTTPException(
@@ -754,7 +754,7 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
             }
             logger.error("Session upload indexing failed: %s", e)
     threading.Thread(target=_bg_index, daemon=True).start()
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         increment_uploads(tid, user["user_id"])
     return {"status": "upload_received_indexing_started", "filename": filename}
 
@@ -831,7 +831,7 @@ async def upload(file: UploadFile = File(...), request: Request = None,
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     tid = _get_tenant_id(user)
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         allowed, usage = check_upload_limit(tid, user["user_id"])
         if not allowed:
             raise HTTPException(
@@ -881,7 +881,7 @@ async def upload(file: UploadFile = File(...), request: Request = None,
         except Exception as e:
             logger.error("Background upload index failed: %s", e)
     threading.Thread(target=_bg_index, daemon=True).start()
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         increment_uploads(tid, user["user_id"])
     return {
         "status": "upload_received_indexing_started",
@@ -894,7 +894,7 @@ async def upload(file: UploadFile = File(...), request: Request = None,
 def query(request: QueryRequest, http_req: Request, user: dict = Depends(_require_auth)):
     uid = _get_uid(user)
     tid = _get_tenant_id(user)
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         allowed, usage = check_query_limit(tid, user["user_id"])
         if not allowed:
             raise HTTPException(
@@ -942,7 +942,7 @@ def query(request: QueryRequest, http_req: Request, user: dict = Depends(_requir
             add_message(active_chat_id, "assistant", result["answer"],
                         json.dumps(result["sources"]))
             result["chat_id"] = active_chat_id
-        if user.get("user_id") != "api":
+        if user.get("user_id") != "api" and user.get("role") != "admin":
             increment_queries(tid, user["user_id"])
         return result
     except Exception as exc:
@@ -986,7 +986,7 @@ def suggest_followups(request: SuggestFollowupsRequest):
 async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth)):
     uid = _get_uid(user)
     tid = _get_tenant_id(user)
-    if user.get("user_id") != "api":
+    if user.get("user_id") != "api" and user.get("role") != "admin":
         allowed, usage = check_query_limit(tid, user["user_id"])
         if not allowed:
             raise HTTPException(
@@ -1049,7 +1049,7 @@ async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth
                         json.dumps(collected["sources"]))
             yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': active_chat_id})}\n\n"
 
-        if user.get("user_id") != "api":
+        if user.get("user_id") != "api" and user.get("role") != "admin":
             increment_queries(tid, user["user_id"])
 
         try:
