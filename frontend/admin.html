@@ -895,6 +895,58 @@
     .modal-test-result { margin-top: 12px; font-size: 13px; padding: 8px 12px; border-radius: 7px; display: none; }
     .modal-test-result.ok { background: #dcfce7; color: #166534; display: block; }
     .modal-test-result.err { background: #fee2e2; color: #991b1b; display: block; }
+
+    .usage-inline {
+      min-width: 150px;
+    }
+
+    .usage-inline-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      margin-bottom: 5px;
+      color: #52525b;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .usage-bar-track {
+      height: 5px;
+      background: #e4e4e7;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .usage-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.2s ease;
+    }
+
+    .usage-bar-fill.green { background: #16a34a; }
+    .usage-bar-fill.amber { background: #d97706; }
+    .usage-bar-fill.red { background: #dc2626; }
+
+    .usage-row-red td { border-left: 3px solid #ef4444; }
+    .usage-row-amber td { border-left: 3px solid #d97706; }
+    .usage-row-red td + td,
+    .usage-row-amber td + td { border-left: none; }
+
+    .reset-usage-btn {
+      border: 1px solid #e4e4e7;
+      background: #fff;
+      color: #71717a;
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .reset-usage-btn:hover {
+      color: #ef4444;
+      border-color: #fca5a5;
+      background: #fff7f7;
+    }
   </style>
 </head>
 <body>
@@ -932,6 +984,9 @@
     </button>
     <button class="nav-btn" data-tab="users" onclick="switchTab('users')">
       <span class="nav-icon">&#128100;</span> Users
+    </button>
+    <button class="nav-btn" data-tab="usage" onclick="switchTab('usage')">
+      <span class="nav-icon">&#128202;</span> Usage
     </button>
     <button class="nav-btn" data-tab="connectors" onclick="switchTab('connectors')">
       <span class="nav-icon">&#128268;</span> Connectors
@@ -1182,6 +1237,17 @@
       </div>
     </div>
 
+    <!-- TAB: USAGE -->
+    <div id="tab-usage" class="tab-panel">
+      <div class="section-block">
+        <div class="sb-header">
+          <div class="sb-title">Usage — Current Month</div>
+          <button class="sb-btn-outline" onclick="loadUsageTab()">&#8635; Refresh</button>
+        </div>
+        <div id="usage-table-wrap"><div class="loading-msg">Loading...</div></div>
+      </div>
+    </div>
+
     <!-- TAB: CONNECTORS -->
     <div id="tab-connectors" class="tab-panel">
       <div id="connectors-grid" class="connector-grid">
@@ -1273,6 +1339,7 @@
     auditlog: "Audit Log",
     feedback: "Feedback",
     users: "Users",
+    usage: "Usage — Current Month",
     connectors: "Connectors",
   };
 
@@ -1339,6 +1406,7 @@
     else if (tab === "auditlog") loadAuditLogTab();
     else if (tab === "feedback") loadFeedbackTab();
     else if (tab === "users") loadUsersTab();
+    else if (tab === "usage") loadUsageTab();
     else if (tab === "connectors") loadConnectorsTab();
   }
 
@@ -2003,6 +2071,80 @@
       loadUsersTab();
     } catch(e) {
       showToast("Failed: " + e.message, "error");
+    }
+  }
+
+  // ===== USAGE TAB =====
+  function usageColor(pct) {
+    if (pct >= 100) return "red";
+    if (pct >= 80) return "amber";
+    return "green";
+  }
+
+  function usageInline(used, limit, pct) {
+    pct = Math.min(100, pct || 0);
+    return '<div class="usage-inline">' +
+      '<div class="usage-inline-top"><span>' + used + ' / ' + limit + '</span><span>' + pct + '%</span></div>' +
+      '<div class="usage-bar-track"><div class="usage-bar-fill ' + usageColor(pct) + '" style="width:' + pct + '%;"></div></div>' +
+      '</div>';
+  }
+
+  async function loadUsageTab() {
+    var container = document.getElementById("usage-table-wrap");
+    container.innerHTML = '<div class="loading-msg">Loading...</div>';
+    try {
+      var res = await fetch(BASE + "/admin/usage", { headers: getAuth() });
+      if (res.status === 403) {
+        container.innerHTML = '<div class="empty-table-msg">Admin access required.</div>';
+        return;
+      }
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var rows = await res.json();
+      if (!rows.length) {
+        container.innerHTML = '<div class="empty-table-msg">No usage records yet.</div>';
+        return;
+      }
+
+      var html = '<table class="admin-table"><thead><tr>' +
+        '<th>User</th><th>Plan</th><th>Uploads (used/limit)</th><th>Queries (used/limit)</th><th>Reset Date</th><th>Actions</th>' +
+        '</tr></thead><tbody>';
+
+      rows.forEach(function(row) {
+        var upPct = Math.min(100, row.uploads_pct || 0);
+        var qPct = Math.min(100, row.queries_pct || 0);
+        var rowCls = (upPct >= 100 || qPct >= 100) ? "usage-row-red" :
+          (upPct >= 80 || qPct >= 80) ? "usage-row-amber" : "";
+        var name = row.display_name || row.username || row.user_id;
+        html += '<tr class="' + rowCls + '">' +
+          '<td><div style="font-weight:600;">' + esc(name) + '</div><div style="font-size:11px;color:#71717a;">' + esc(row.email || row.username || row.user_id) + '</div></td>' +
+          '<td style="text-transform:capitalize;color:#52525b;">' + esc(row.plan || "free") + '</td>' +
+          '<td>' + usageInline(row.uploads_used || 0, row.uploads_limit || 0, upPct) + '</td>' +
+          '<td>' + usageInline(row.queries_used || 0, row.queries_limit || 0, qPct) + '</td>' +
+          '<td style="white-space:nowrap;color:#71717a;">' + esc(fmtDate(row.period_end)) + '</td>' +
+          '<td><button class="reset-usage-btn" onclick="resetUserUsage(&quot;' + esc(row.user_id) + '&quot;)">Reset</button></td>' +
+          '</tr>';
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } catch(e) {
+      container.innerHTML = '<div class="empty-table-msg">Failed to load usage.</div>';
+      showToast("Failed to load usage.", "error");
+    }
+  }
+
+  async function resetUserUsage(userId) {
+    if (!confirm("Reset usage counters for this user?")) return;
+    try {
+      var res = await fetch(BASE + "/admin/usage/reset/" + encodeURIComponent(userId), {
+        method: "POST",
+        headers: getAuth(),
+      });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      showToast("Usage reset.", "success");
+      loadUsageTab();
+    } catch(e) {
+      showToast("Reset failed.", "error");
     }
   }
 

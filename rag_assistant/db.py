@@ -129,6 +129,21 @@ def init_db():
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS usage_limits (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                uploads_used INTEGER NOT NULL DEFAULT 0,
+                queries_used INTEGER NOT NULL DEFAULT 0,
+                uploads_limit INTEGER NOT NULL DEFAULT 1,
+                queries_limit INTEGER NOT NULL DEFAULT 5,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(tenant_id, user_id)
+            );
         """)
     migrate_add_display_name()
     migrate_add_user_id_to_chats()
@@ -530,6 +545,171 @@ def get_analytics(tenant_id: str = None) -> dict:
         "feedback_bad": feedback_bad,
         "satisfaction_rate": round(feedback_good / total_fb * 100) if total_fb > 0 else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Usage limits
+# ---------------------------------------------------------------------------
+
+def _current_usage_period() -> tuple[str, str, str]:
+    now = datetime.utcnow()
+    period_start = now.replace(day=1, hour=0, minute=0,
+                               second=0, microsecond=0).isoformat()
+    next_month = (now.replace(day=28) + timedelta(days=4))
+    period_end = next_month.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    ).isoformat()
+    return period_start, period_end, now.isoformat()
+
+
+def _limits_for_plan(plan: str) -> dict:
+    return {
+        'free': {'uploads': 1, 'queries': 5},
+        'pro': {'uploads': 50, 'queries': 500},
+        'team': {'uploads': 200, 'queries': 2000},
+        'enterprise': {'uploads': 999999, 'queries': 999999},
+    }.get(plan, {'uploads': 1, 'queries': 5})
+
+
+def get_or_create_usage(tenant_id: str, user_id: str) -> dict:
+    """Get current period usage for a user. Creates if not exists."""
+    period_start, period_end, now_iso = _current_usage_period()
+
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT * FROM usage_limits
+               WHERE tenant_id=? AND user_id=?
+               AND period_start=?""",
+            (tenant_id, user_id, period_start)
+        ).fetchone()
+
+        if row:
+            return dict(row)
+
+        tenant = conn.execute(
+            "SELECT plan FROM tenants WHERE id=?",
+            (tenant_id,)
+        ).fetchone()
+        plan = tenant['plan'] if tenant else 'free'
+        limits = _limits_for_plan(plan)
+
+        existing = conn.execute(
+            """SELECT * FROM usage_limits
+               WHERE tenant_id=? AND user_id=?""",
+            (tenant_id, user_id)
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                """UPDATE usage_limits
+                   SET uploads_used=0, queries_used=0,
+                       uploads_limit=?, queries_limit=?,
+                       period_start=?, period_end=?, updated_at=?
+                   WHERE tenant_id=? AND user_id=?""",
+                (limits['uploads'], limits['queries'], period_start, period_end,
+                 now_iso, tenant_id, user_id)
+            )
+        else:
+            conn.execute(
+                """INSERT OR IGNORE INTO usage_limits
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), tenant_id, user_id, 0, 0,
+                 limits['uploads'], limits['queries'],
+                 period_start, period_end, now_iso, now_iso)
+            )
+
+        return dict(conn.execute(
+            """SELECT * FROM usage_limits
+               WHERE tenant_id=? AND user_id=?
+               AND period_start=?""",
+            (tenant_id, user_id, period_start)
+        ).fetchone())
+
+
+def check_upload_limit(tenant_id: str,
+                       user_id: str) -> tuple[bool, dict]:
+    """
+    Returns (allowed: bool, usage: dict).
+    allowed=False means limit reached.
+    """
+    usage = get_or_create_usage(tenant_id, user_id)
+    allowed = usage['uploads_used'] < usage['uploads_limit']
+    return allowed, usage
+
+
+def check_query_limit(tenant_id: str,
+                      user_id: str) -> tuple[bool, dict]:
+    """
+    Returns (allowed: bool, usage: dict).
+    allowed=False means limit reached.
+    """
+    usage = get_or_create_usage(tenant_id, user_id)
+    allowed = usage['queries_used'] < usage['queries_limit']
+    return allowed, usage
+
+
+def increment_uploads(tenant_id: str, user_id: str) -> dict:
+    """Increment upload count and return updated usage."""
+    usage = get_or_create_usage(tenant_id, user_id)
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE usage_limits
+               SET uploads_used = uploads_used + 1, updated_at=?
+               WHERE tenant_id=? AND user_id=?
+               AND period_start=?""",
+            (now, tenant_id, user_id, usage['period_start'])
+        )
+    return get_or_create_usage(tenant_id, user_id)
+
+
+def increment_queries(tenant_id: str, user_id: str) -> dict:
+    """Increment query count and return updated usage."""
+    usage = get_or_create_usage(tenant_id, user_id)
+    now = datetime.utcnow().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE usage_limits
+               SET queries_used = queries_used + 1, updated_at=?
+               WHERE tenant_id=? AND user_id=?
+               AND period_start=?""",
+            (now, tenant_id, user_id, usage['period_start'])
+        )
+    return get_or_create_usage(tenant_id, user_id)
+
+
+def get_usage(tenant_id: str, user_id: str) -> dict:
+    """Get current usage with remaining counts."""
+    usage = get_or_create_usage(tenant_id, user_id)
+    return {
+        **usage,
+        "uploads_remaining": max(
+            0, usage['uploads_limit'] - usage['uploads_used']
+        ),
+        "queries_remaining": max(
+            0, usage['queries_limit'] - usage['queries_used']
+        ),
+        "uploads_pct": round(
+            usage['uploads_used'] / usage['uploads_limit'] * 100
+        ) if usage['uploads_limit'] > 0 else 100,
+        "queries_pct": round(
+            usage['queries_used'] / usage['queries_limit'] * 100
+        ) if usage['queries_limit'] > 0 else 100,
+    }
+
+
+def reset_usage(tenant_id: str, user_id: str) -> None:
+    """Admin: reset usage counters for a user."""
+    now = datetime.utcnow().isoformat()
+    usage = get_or_create_usage(tenant_id, user_id)
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE usage_limits
+               SET uploads_used=0, queries_used=0, updated_at=?
+               WHERE tenant_id=? AND user_id=?
+               AND period_start=?""",
+            (now, tenant_id, user_id, usage['period_start'])
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,9 @@ from rag_assistant.db import (
     upsert_connector, get_connector, get_connector_by_id, list_connectors,
     update_connector_status, delete_connector,
     block_user, is_user_blocked, log_audit, get_audit_log,
+    check_upload_limit, check_query_limit,
+    increment_uploads, increment_queries, get_usage,
+    reset_usage,
 )
 from rag_assistant.retriever import retrieve
 from rag_assistant.query_rewriter import rewrite_query
@@ -208,6 +211,11 @@ def _get_tenant_id(user: dict) -> str:
 def _get_uid(user: dict) -> str | None:
     uid = user.get("user_id")
     return None if uid == "api" else uid
+
+
+def _require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +649,21 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     tid = _get_tenant_id(user)
+    if user.get("user_id") != "api":
+        allowed, usage = check_upload_limit(tid, user["user_id"])
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "upload_limit_reached",
+                    "message": f"You have used all {usage['uploads_limit']} upload(s) for this month.",
+                    "uploads_used": usage["uploads_used"],
+                    "uploads_limit": usage["uploads_limit"],
+                    "resets_at": usage["period_end"],
+                    "upgrade_url": "/settings#billing",
+                },
+            )
+
     session_dir = STORAGE_DIR / "sessions" / chat_id
     session_dir.mkdir(parents=True, exist_ok=True)
     dest = session_dir / file.filename
@@ -661,6 +684,8 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
         except Exception as e:
             logger.error("Session upload indexing failed: %s", e)
     threading.Thread(target=_bg_index, daemon=True).start()
+    if user.get("user_id") != "api":
+        increment_uploads(tid, user["user_id"])
     return {"status": "upload_received_indexing_started", "filename": filename}
 
 
@@ -712,6 +737,21 @@ async def upload(file: UploadFile = File(...), request: Request = None,
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
     tid = _get_tenant_id(user)
+    if user.get("user_id") != "api":
+        allowed, usage = check_upload_limit(tid, user["user_id"])
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "upload_limit_reached",
+                    "message": f"You have used all {usage['uploads_limit']} upload(s) for this month.",
+                    "uploads_used": usage["uploads_used"],
+                    "uploads_limit": usage["uploads_limit"],
+                    "resets_at": usage["period_end"],
+                    "upgrade_url": "/settings#billing",
+                },
+            )
+
     uid = _get_uid(user)
     ip = request.client.host if request and request.client else None
     try:
@@ -740,6 +780,8 @@ async def upload(file: UploadFile = File(...), request: Request = None,
         except Exception as e:
             logger.error("Background upload index failed: %s", e)
     threading.Thread(target=_bg_index, daemon=True).start()
+    if user.get("user_id") != "api":
+        increment_uploads(tid, user["user_id"])
     return {
         "status": "upload_received_indexing_started",
         "filename": filename,
@@ -751,6 +793,21 @@ async def upload(file: UploadFile = File(...), request: Request = None,
 def query(request: QueryRequest, http_req: Request, user: dict = Depends(_require_auth)):
     uid = _get_uid(user)
     tid = _get_tenant_id(user)
+    if user.get("user_id") != "api":
+        allowed, usage = check_query_limit(tid, user["user_id"])
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "query_limit_reached",
+                    "message": f"You have used all {usage['queries_limit']} queries for this month.",
+                    "queries_used": usage["queries_used"],
+                    "queries_limit": usage["queries_limit"],
+                    "resets_at": usage["period_end"],
+                    "upgrade_url": "/settings#billing",
+                },
+            )
+
     ip = http_req.client.host if http_req.client else None
     try:
         log_audit(tid, uid or "anon", "query", resource_type="knowledge_base",
@@ -779,6 +836,8 @@ def query(request: QueryRequest, http_req: Request, user: dict = Depends(_requir
             add_message(active_chat_id, "assistant", result["answer"],
                         json.dumps(result["sources"]))
             result["chat_id"] = active_chat_id
+        if user.get("user_id") != "api":
+            increment_queries(tid, user["user_id"])
         return result
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -821,6 +880,21 @@ def suggest_followups(request: SuggestFollowupsRequest):
 async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth)):
     uid = _get_uid(user)
     tid = _get_tenant_id(user)
+    if user.get("user_id") != "api":
+        allowed, usage = check_query_limit(tid, user["user_id"])
+        if not allowed:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "query_limit_reached",
+                    "message": f"You have used all {usage['queries_limit']} queries for this month.",
+                    "queries_used": usage["queries_used"],
+                    "queries_limit": usage["queries_limit"],
+                    "resets_at": usage["period_end"],
+                    "upgrade_url": "/settings#billing",
+                },
+            )
+
     active_chat_id = request.chat_id
     if active_chat_id == "new":
         chat = create_chat(user_id=uid, tenant_id=tid if tid else None)
@@ -867,6 +941,9 @@ async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth
                         json.dumps(collected["sources"]))
             yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': active_chat_id})}\n\n"
 
+        if user.get("user_id") != "api":
+            increment_queries(tid, user["user_id"])
+
         try:
             save_query_log(
                 chat_id=active_chat_id or "global",
@@ -897,6 +974,63 @@ def submit_feedback(request: FeedbackRequest):
                              request.question, request.answer, request.rating)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Usage limits
+# ---------------------------------------------------------------------------
+
+@app.get("/usage")
+def usage(user: dict = Depends(_require_auth)):
+    tid = _get_tenant_id(user)
+    result = get_usage(tid, user["user_id"])
+    tenant = get_tenant(tid)
+    result["plan"] = tenant["plan"] if tenant else "free"
+    return result
+
+
+@app.get("/admin/usage")
+def admin_usage(user: dict = Depends(_require_auth)):
+    _require_admin(user)
+    tid = _get_tenant_id(user)
+    try:
+        for tenant_user in list_tenant_users(tid):
+            get_usage(tid, tenant_user["id"])
+
+        with get_conn() as conn:
+            rows = conn.execute(
+                """SELECT ul.*, u.username, u.display_name, u.email,
+                          u.role, t.plan
+                   FROM usage_limits ul
+                   LEFT JOIN users u ON u.id = ul.user_id
+                   LEFT JOIN tenants t ON t.id = ul.tenant_id
+                   WHERE ul.tenant_id=?
+                   ORDER BY COALESCE(u.display_name, u.username, ul.user_id) ASC""",
+                (tid,),
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "display_name": row["display_name"] or row["username"] or row["user_id"],
+                "uploads_remaining": max(0, row["uploads_limit"] - row["uploads_used"]),
+                "queries_remaining": max(0, row["queries_limit"] - row["queries_used"]),
+                "uploads_pct": round(row["uploads_used"] / row["uploads_limit"] * 100)
+                if row["uploads_limit"] > 0 else 100,
+                "queries_pct": round(row["queries_used"] / row["queries_limit"] * 100)
+                if row["queries_limit"] > 0 else 100,
+            }
+            for row in rows
+        ]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/usage/reset/{user_id}")
+def admin_usage_reset(user_id: str, user: dict = Depends(_require_auth)):
+    _require_admin(user)
+    tid = _get_tenant_id(user)
+    reset_usage(tid, user_id)
+    return {"reset": True, "user_id": user_id}
 
 
 # ---------------------------------------------------------------------------

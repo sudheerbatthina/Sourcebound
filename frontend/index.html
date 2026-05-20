@@ -308,6 +308,48 @@
       color: #a1a1aa;
     }
 
+    .sidebar-usage {
+      margin: 0 8px 6px;
+      padding: 9px 10px;
+      border: 1px solid var(--sidebar-border);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.04);
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+
+    .sidebar-usage:hover {
+      background: rgba(255,255,255,0.07);
+      border-color: rgba(255,255,255,0.18);
+    }
+
+    .usage-row {
+      display: grid;
+      grid-template-columns: 18px 1fr 44px;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 7px;
+      font-size: 11px;
+      color: #a1a1aa;
+    }
+
+    .usage-row:last-child { margin-bottom: 0; }
+    .usage-count { text-align: right; color: #d4d4d8; font-variant-numeric: tabular-nums; }
+
+    .usage-bar-track {
+      height: 4px; background: rgba(255,255,255,0.1);
+      border-radius: 2px; overflow: hidden;
+    }
+
+    .usage-bar-fill {
+      height: 100%; border-radius: 2px;
+      transition: width 0.3s ease;
+    }
+
+    .usage-bar-fill.green { background: #16a34a; }
+    .usage-bar-fill.amber { background: #d97706; }
+    .usage-bar-fill.red   { background: #dc2626; }
+
     /* Claude-style profile popup */
     #profile-popover {
       position: absolute;
@@ -1225,6 +1267,42 @@
     }
 
     .settings-save-btn:hover { background: var(--accent-hover); }
+
+    .limit-card {
+      max-width: 420px;
+      border: 1px solid rgba(239,68,68,0.28);
+      background: rgba(239,68,68,0.08);
+      border-radius: 10px;
+      padding: 14px 16px;
+      color: var(--bot-content-color, #18181b);
+    }
+
+    .limit-card-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #dc2626;
+      margin-bottom: 6px;
+    }
+
+    .limit-card p {
+      font-size: 13px;
+      line-height: 1.5;
+      margin: 0 0 10px;
+      color: var(--text-muted);
+    }
+
+    .limit-card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .limit-card-actions a {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      text-decoration: none;
+    }
   </style>
 </head>
 <body data-theme="light">
@@ -1251,6 +1329,18 @@
     <div id="chat-scroll"></div>
 
     <div style="position:relative;margin-top:auto;">
+      <div class="sidebar-usage" id="sidebar-usage" onclick="window.location.href='/settings#billing'">
+        <div class="usage-row">
+          <span>📤</span>
+          <div class="usage-bar-track"><div id="usage-upload-fill" class="usage-bar-fill green" style="width:0%;"></div></div>
+          <span class="usage-count" id="usage-upload-count">0/1</span>
+        </div>
+        <div class="usage-row">
+          <span>💬</span>
+          <div class="usage-bar-track"><div id="usage-query-fill" class="usage-bar-fill green" style="width:0%;"></div></div>
+          <span class="usage-count" id="usage-query-count">0/5</span>
+        </div>
+      </div>
       <!-- Claude-style profile popup -->
       <div id="profile-popover">
         <div class="popover-email" id="popover-email">—</div>
@@ -1484,9 +1574,18 @@
     const response = await fetch(url, { method: "POST", headers: headers, body: formData });
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      throw new Error(err.detail || "Upload failed");
+      const e = new Error(
+        typeof err.detail === "string"
+          ? err.detail
+          : (err.detail && err.detail.message) || "Upload failed"
+      );
+      e.status = response.status;
+      e.detail = err.detail;
+      throw e;
     }
-    return response.json();
+    const data = await response.json();
+    refreshUsage();
+    return data;
   }
 
   function checkAuth() {
@@ -1517,6 +1616,81 @@
   let allChats = [];
   let tempThemeSelection = "light";
   let tempDefaultMode = "chat";
+  let currentUsage = null;
+
+  function usageColor(pct) {
+    if (pct >= 100) return "red";
+    if (pct >= 80) return "amber";
+    return "green";
+  }
+
+  function formatResetDate(iso) {
+    if (!iso) return "next month";
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+        year: "numeric"
+      });
+    } catch(e) {
+      return iso;
+    }
+  }
+
+  async function refreshUsage() {
+    try {
+      const res = await fetch(BASE + "/usage", { headers: getAuth() });
+      if (!res.ok) return;
+      currentUsage = await res.json();
+      renderSidebarUsage(currentUsage);
+    } catch(e) {}
+  }
+
+  function renderSidebarUsage(usage) {
+    if (!usage) return;
+    const uploadPct = Math.min(100, usage.uploads_pct || 0);
+    const queryPct = Math.min(100, usage.queries_pct || 0);
+    const uploadFill = document.getElementById("usage-upload-fill");
+    const queryFill = document.getElementById("usage-query-fill");
+    if (!uploadFill || !queryFill) return;
+    uploadFill.style.width = uploadPct + "%";
+    queryFill.style.width = queryPct + "%";
+    uploadFill.className = "usage-bar-fill " + usageColor(uploadPct);
+    queryFill.className = "usage-bar-fill " + usageColor(queryPct);
+    document.getElementById("usage-upload-count").textContent =
+      (usage.uploads_used || 0) + "/" + (usage.uploads_limit || 0);
+    document.getElementById("usage-query-count").textContent =
+      (usage.queries_used || 0) + "/" + (usage.queries_limit || 0);
+  }
+
+  function extractLimitDetail(err) {
+    return (err && err.detail) || {};
+  }
+
+  function showUploadLimitAlert(err) {
+    const detail = extractLimitDetail(err);
+    const used = detail.uploads_used != null ? detail.uploads_used : detail.uploads_limit;
+    const limit = detail.uploads_limit || 1;
+    alert("Upload limit reached. You've used your " + used + " upload" +
+      (limit === 1 ? "" : "s") + " for this month. Resets on " +
+      formatResetDate(detail.resets_at) + ". Upgrade to Pro for more.");
+  }
+
+  function showQueryLimitCard(contentEl, detail) {
+    const limit = detail.queries_limit || 5;
+    contentEl.classList.remove("streaming");
+    contentEl.setAttribute("data-raw", "");
+    contentEl.innerHTML =
+      '<div class="limit-card">' +
+        '<div class="limit-card-title">⚡ Monthly limit reached</div>' +
+        '<p>You have used all ' + limit + ' queries this month.<br>Resets on ' +
+          htmlEsc(formatResetDate(detail.resets_at)) + '.</p>' +
+        '<div class="limit-card-actions">' +
+          '<a href="' + htmlEsc(detail.upgrade_url || "/settings#billing") + '">Upgrade Plan →</a>' +
+          '<a href="/settings#billing">Learn more</a>' +
+        '</div>' +
+      '</div>';
+  }
 
   // ===== THEME =====
   function applyTheme(theme) {
@@ -1778,6 +1952,11 @@
       loadKbDocs();
     } catch(e) {
       console.error("KB upload error:", e);
+      if (e.status === 429) {
+        showUploadLimitAlert(e);
+        refreshUsage();
+        return;
+      }
       alert("Upload failed: " + e.message);
     }
   }
@@ -1792,6 +1971,11 @@
       refreshSessionDocChips();
     } catch(e) {
       console.error("Session upload error:", e);
+      if (e.status === 429) {
+        showUploadLimitAlert(e);
+        refreshUsage();
+        return;
+      }
       alert("Upload failed: " + e.message);
     }
   }
@@ -2015,6 +2199,7 @@
 
     var allSources = [];
     var rawAnswer = "";
+    var limitHit = false;
 
     try {
       var res = await fetch(BASE + "/query/stream", {
@@ -2028,52 +2213,62 @@
         })
       });
 
-      if (!res.ok) throw new Error("HTTP " + res.status);
+      if (res.status === 429) {
+        var limitPayload = await res.json().catch(function() { return {}; });
+        showQueryLimitCard(contentEl, limitPayload.detail || {});
+        limitHit = true;
+      } else {
+        if (!res.ok) throw new Error("HTTP " + res.status);
 
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      var buffer = "";
+        var reader = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = "";
 
-      while (true) {
-        var readResult = await reader.read();
-        if (readResult.done) break;
-        buffer += decoder.decode(readResult.value, { stream: true });
-        var parts = buffer.split("\n\n");
-        buffer = parts.pop();
-        for (var i = 0; i < parts.length; i++) {
-          var part = parts[i].trim();
-          if (!part) continue;
-          var line = part.replace(/^data:\s*/, "").trim();
-          if (!line) continue;
-          try {
-            var evt = JSON.parse(line);
-            processStreamEvent(evt, contentEl, sourcesEl, badgeEl, function(s) { allSources = s; });
-            rawAnswer = contentEl.getAttribute("data-raw") || "";
-          } catch(parseErr) {
-            // not JSON, ignore
+        while (true) {
+          var readResult = await reader.read();
+          if (readResult.done) break;
+          buffer += decoder.decode(readResult.value, { stream: true });
+          var parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          for (var i = 0; i < parts.length; i++) {
+            var part = parts[i].trim();
+            if (!part) continue;
+            var line = part.replace(/^data:\s*/, "").trim();
+            if (!line) continue;
+            try {
+              var evt = JSON.parse(line);
+              processStreamEvent(evt, contentEl, sourcesEl, badgeEl, function(s) { allSources = s; });
+              rawAnswer = contentEl.getAttribute("data-raw") || "";
+            } catch(parseErr) {
+              // not JSON, ignore
+            }
           }
         }
-      }
 
-      if (buffer.trim()) {
-        var line2 = buffer.replace(/^data:\s*/, "").trim();
-        if (line2) {
-          try {
-            var evt2 = JSON.parse(line2);
-            processStreamEvent(evt2, contentEl, sourcesEl, badgeEl, function(s) { allSources = s; });
-          } catch(e2) {}
+        if (buffer.trim()) {
+          var line2 = buffer.replace(/^data:\s*/, "").trim();
+          if (line2) {
+            try {
+              var evt2 = JSON.parse(line2);
+              processStreamEvent(evt2, contentEl, sourcesEl, badgeEl, function(s) { allSources = s; });
+            } catch(e2) {}
+          }
         }
       }
 
     } catch(err) {
       console.error("stream error", err);
       contentEl.textContent = "An error occurred. Please try again.";
+    } finally {
+      refreshUsage();
     }
 
     contentEl.classList.remove("streaming");
-    finalizeActions(actionsEl, contentEl, allSources, text, activeChatId);
+    if (!limitHit) {
+      finalizeActions(actionsEl, contentEl, allSources, text, activeChatId);
+    }
     rawAnswer = contentEl.getAttribute("data-raw") || contentEl.innerText || "";
-    if (rawAnswer && text) {
+    if (rawAnswer && text && !limitHit) {
       suggestFollowups(text, rawAnswer, followupsEl);
     }
     busy = false;
@@ -2415,6 +2610,11 @@
       setTimeout(refreshSessionDocChips, 1500);
     } catch(e) {
       console.error("Session upload error:", e);
+      if (e.status === 429) {
+        showUploadLimitAlert(e);
+        refreshUsage();
+        return;
+      }
       alert("Upload failed: " + e.message);
     }
   }
@@ -2505,6 +2705,7 @@
       if (kbBtn) kbBtn.style.display = (cragUser.role === "admin") ? "" : "none";
     } catch(e) {}
     loadChats();
+    refreshUsage();
 
     var ta = document.getElementById("question-input");
     ta.addEventListener("input", autoResizeTextarea);

@@ -285,6 +285,87 @@
       line-height: 1.6;
     }
 
+    .usage-card {
+      background: #1a1a1c;
+      border: 1px solid #2a2a2e;
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 24px;
+    }
+
+    .usage-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .usage-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #a1a1aa;
+    }
+
+    .usage-plan {
+      font-size: 12px;
+      color: #818cf8;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+
+    .usage-metric { margin-bottom: 16px; }
+    .usage-metric:last-of-type { margin-bottom: 12px; }
+
+    .usage-metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .usage-metric-label { color: #f4f4f5; }
+    .usage-metric-count { color: #a1a1aa; font-variant-numeric: tabular-nums; }
+
+    .usage-bar-track {
+      height: 8px;
+      background: #27272a;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+
+    .usage-bar-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.3s ease;
+    }
+
+    .usage-bar-fill.green { background: #16a34a; }
+    .usage-bar-fill.amber { background: #d97706; }
+    .usage-bar-fill.red { background: #dc2626; }
+
+    .usage-reset {
+      font-size: 12px;
+      color: #71717a;
+      margin: 14px 0 16px;
+    }
+
+    .usage-upgrade {
+      display: inline-flex;
+      align-items: center;
+      padding: 9px 14px;
+      border-radius: 8px;
+      background: #6366f1;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .usage-upgrade:hover { background: #818cf8; }
+
     /* Password group */
     .password-group {
       display: flex;
@@ -337,6 +418,29 @@
     <!-- GENERAL -->
     <div class="section active" id="section-general">
       <div class="section-title">General</div>
+
+      <div class="usage-card" id="usage-card">
+        <div class="usage-card-head">
+          <div class="usage-title">This Month's Usage</div>
+          <div class="usage-plan" id="usage-plan">Free Plan</div>
+        </div>
+        <div class="usage-metric">
+          <div class="usage-metric-row">
+            <span class="usage-metric-label">Documents uploaded</span>
+            <span class="usage-metric-count" id="usage-uploads-count">0 / 1 · 0%</span>
+          </div>
+          <div class="usage-bar-track"><div id="usage-uploads-fill" class="usage-bar-fill green" style="width:0%;"></div></div>
+        </div>
+        <div class="usage-metric">
+          <div class="usage-metric-row">
+            <span class="usage-metric-label">Queries asked</span>
+            <span class="usage-metric-count" id="usage-queries-count">0 / 5 · 0%</span>
+          </div>
+          <div class="usage-bar-track"><div id="usage-queries-fill" class="usage-bar-fill green" style="width:0%;"></div></div>
+        </div>
+        <div class="usage-reset" id="usage-reset">Resets: —</div>
+        <a class="usage-upgrade" href="/pricing">Upgrade to Pro — $15/mo →</a>
+      </div>
 
       <div class="setting-row">
         <div>
@@ -654,6 +758,51 @@
     if (!getToken()) window.location.replace("/login");
   }
 
+  function usageColor(pct) {
+    if (pct >= 100) return "red";
+    if (pct >= 80) return "amber";
+    return "green";
+  }
+
+  function formatResetDate(iso) {
+    if (!iso) return "—";
+    try {
+      return new Date(iso).toLocaleDateString(undefined, {
+        month: "long",
+        day: "numeric",
+        year: "numeric"
+      });
+    } catch(e) {
+      return iso;
+    }
+  }
+
+  async function loadUsage() {
+    try {
+      var res = await fetch(BASE + "/usage", { headers: getAuth() });
+      if (!res.ok) return;
+      var usage = await res.json();
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      var plan = (usage.plan || user.plan || "free").toString();
+      document.getElementById("usage-plan").textContent =
+        plan.charAt(0).toUpperCase() + plan.slice(1) + " Plan";
+
+      renderUsageBar("uploads", usage.uploads_used || 0, usage.uploads_limit || 0, usage.uploads_pct || 0);
+      renderUsageBar("queries", usage.queries_used || 0, usage.queries_limit || 0, usage.queries_pct || 0);
+      document.getElementById("usage-reset").textContent =
+        "Resets: " + formatResetDate(usage.period_end);
+    } catch(e) {}
+  }
+
+  function renderUsageBar(kind, used, limit, pct) {
+    pct = Math.min(100, pct || 0);
+    var fill = document.getElementById("usage-" + kind + "-fill");
+    fill.style.width = pct + "%";
+    fill.className = "usage-bar-fill " + usageColor(pct);
+    document.getElementById("usage-" + kind + "-count").textContent =
+      used + " / " + limit + " · " + pct + "%";
+  }
+
   // ===== SETTINGS STORAGE =====
   var DEFAULTS = {
     answerStyle: "detailed",
@@ -962,6 +1111,7 @@
     document.getElementById("toggle-history").checked = s.chatHistory !== false;
 
     applyTheme(s.theme);
+    loadUsage();
 
     // Populate profile section from crag_user
     try {
