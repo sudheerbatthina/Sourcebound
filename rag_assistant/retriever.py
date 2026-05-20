@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 
 from dotenv import load_dotenv
@@ -25,6 +26,21 @@ except ImportError:
 def _reranking_enabled() -> bool:
     key = COHERE_API_KEY or os.getenv("COHERE_API_KEY", "")
     return _COHERE_AVAILABLE and bool(key)
+
+
+_APP_QUESTION_RE = re.compile(
+    r"\b(fetch\s*ai|sourcebound|this\s+app|what\s+is\s+this|what\s+can\s+(i|you|we)\s+upload|"
+    r"how\s+does\s+this\s+work|what\s+can\s+you\s+do|what\s+do\s+you\s+do|"
+    r"tell\s+me\s+about\s+(this\s+)?app|about\s+you|who\s+are\s+you|"
+    r"what\s+are\s+you|your\s+features?|what\s+is\s+fetch)\b",
+    re.IGNORECASE,
+)
+
+APP_OVERVIEW_SOURCE = "fetch_ai_overview.md"
+
+
+def is_app_question(query: str) -> bool:
+    return bool(_APP_QUESTION_RE.search(query))
 
 
 def _allowed_levels(user_group: str | None) -> list[str]:
@@ -102,11 +118,19 @@ def retrieve(
         else:
             access_where = {"access_level": {"$in": allowed}}
 
+    # Restrict to app overview doc when query is about the app itself
+    source_where: dict | None = None
+    if is_app_question(query):
+        source_where = {"source": {"$eq": APP_OVERVIEW_SOURCE}}
+
     # Combine filters
+    filters = [session_where]
     if access_where is not None:
-        where: dict = {"$and": [session_where, access_where]}
-    else:
-        where = session_where
+        filters.append(access_where)
+    if source_where is not None:
+        filters.append(source_where)
+
+    where: dict = {"$and": filters} if len(filters) > 1 else filters[0]
 
     query_kwargs: dict = {
         "query_embeddings": [query_embedding],
