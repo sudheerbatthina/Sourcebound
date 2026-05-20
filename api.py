@@ -48,6 +48,8 @@ app.add_middleware(
     secret_key=os.environ.get("SESSION_SECRET", "fallback-dev-secret-only"),
 )
 
+_session_upload_status: dict[tuple[str, str], dict] = {}
+
 # ---------------------------------------------------------------------------
 # Startup
 # ---------------------------------------------------------------------------
@@ -675,13 +677,39 @@ async def upload_to_chat(chat_id: str, file: UploadFile = File(...),
         raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
 
     filename = file.filename
+    status_key = (chat_id, filename)
+    _session_upload_status[status_key] = {"status": "indexing", "chunk_count": 0}
+
     def _bg_index():
         try:
             from rag_assistant.vector_store import index_pdf_for_session
             index_pdf_for_session(dest, session_id=chat_id, tenant_id=tid)
+            try:
+                col_name = get_collection_name(tid)
+                client = chromadb.PersistentClient(path=CHROMA_DIR)
+                collection = client.get_or_create_collection(name=col_name)
+                indexed = collection.get(
+                    where={"$and": [
+                        {"session_id": {"$eq": chat_id}},
+                        {"source": {"$eq": filename}},
+                    ]},
+                    include=[],
+                )
+                chunk_count = len(indexed.get("ids", []))
+            except Exception:
+                chunk_count = 0
+            _session_upload_status[status_key] = {
+                "status": "ready",
+                "chunk_count": chunk_count,
+            }
             logger.info("Session upload indexed: %s for chat %s", filename, chat_id)
             _fire_webhook("document_indexed", filename, None, chat_id)
         except Exception as e:
+            _session_upload_status[status_key] = {
+                "status": "error",
+                "chunk_count": 0,
+                "error": str(e),
+            }
             logger.error("Session upload indexing failed: %s", e)
     threading.Thread(target=_bg_index, daemon=True).start()
     if user.get("user_id") != "api":
@@ -715,12 +743,20 @@ def get_chat_documents(chat_id: str, user: dict = Depends(_require_auth)):
         session_dir = STORAGE_DIR / "sessions" / chat_id
         if session_dir.exists():
             for pdf_path in sorted(session_dir.glob("*.pdf")):
-                if pdf_path.name not in docs:
-                    docs[pdf_path.name] = {
-                        "source": pdf_path.name,
-                        "chunk_count": 0,
-                        "status": "indexing",
-                    }
+                status = _session_upload_status.get((chat_id, pdf_path.name))
+                if pdf_path.name in docs:
+                    if status and status.get("status") == "error":
+                        docs[pdf_path.name]["status"] = "error"
+                    else:
+                        docs[pdf_path.name]["status"] = "ready"
+                    continue
+
+                docs[pdf_path.name] = {
+                    "source": pdf_path.name,
+                    "chunk_count": int(status.get("chunk_count", 0)) if status else 0,
+                    "status": status.get("status", "uploaded") if status else "uploaded",
+                    "error": status.get("error") if status else None,
+                }
 
         return [docs[src] for src in sorted(docs)]
     except Exception as exc:

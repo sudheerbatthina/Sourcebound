@@ -1669,6 +1669,7 @@
   let tempDefaultMode = "chat";
   let currentUsage = null;
   let sessionDocsCache = [];
+  let sessionDocsPollTimer = null;
 
   function usageColor(pct) {
     if (pct >= 100) return "red";
@@ -2684,6 +2685,7 @@
       if (!Array.isArray(docs)) docs = [];
       sessionDocsCache = docs;
       renderSessionDocChips(docs);
+      scheduleSessionDocsPoll(docs);
     } catch(e) {
       // ignore
     }
@@ -2697,6 +2699,7 @@
       sessionDocsCache.push({ source: filename, chunk_count: 0, status: "indexing" });
     }
     renderSessionDocChips(sessionDocsCache);
+    scheduleSessionDocsPoll(sessionDocsCache);
   }
 
   function renderSessionDocChips(docs) {
@@ -2707,7 +2710,9 @@
       var name = d.source || "—";
       var chunks = d.chunk_count || 0;
       var indexing = d.status === "indexing";
-      var meta = indexing ? "Indexing..." : (chunks ? chunks + " chunks ready" : "Ready");
+      var errored = d.status === "error";
+      var uploaded = d.status === "uploaded";
+      var meta = indexing ? "Indexing..." : (errored ? "Indexing failed" : (uploaded ? "Uploaded" : "Done"));
       return '<div class="session-doc-chip' + (indexing ? ' indexing' : '') + '">' +
         '<span class="doc-icon">&#128196;</span>' +
         '<span class="doc-text">' +
@@ -2720,7 +2725,29 @@
 
   function clearSessionDocChips() {
     sessionDocsCache = [];
+    if (sessionDocsPollTimer) {
+      clearTimeout(sessionDocsPollTimer);
+      sessionDocsPollTimer = null;
+    }
     renderSessionDocChips([]);
+  }
+
+  function scheduleSessionDocsPoll(docs) {
+    if (sessionDocsPollTimer) {
+      clearTimeout(sessionDocsPollTimer);
+      sessionDocsPollTimer = null;
+    }
+    var hasIndexing = (docs || []).some(function(d) {
+      return d.status === "indexing";
+    });
+    if (!hasIndexing || !activeChatId) return;
+    sessionDocsPollTimer = setTimeout(function() {
+      sessionDocsPollTimer = null;
+      refreshSessionDocChips();
+      if (document.getElementById("docs-panel").classList.contains("open")) {
+        loadSessionDocsPanel();
+      }
+    }, 2000);
   }
 
   // ===== INPUT HANDLING =====
