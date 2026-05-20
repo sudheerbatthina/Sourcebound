@@ -33,6 +33,10 @@ mlruns/
 scripts/
 README.md
 *.md
+!data/fetch_ai_overview.md
+
+# Large data files — mount as volumes instead
+data/*.pdf
 
 # Test / eval artefacts
 eval_results.json
