@@ -2442,6 +2442,9 @@
     } else if (type === "sources") {
       var sources = evt.sources || evt.data || [];
       if (!Array.isArray(sources)) sources = [];
+      if (!answerUsesSources(contentEl.getAttribute("data-raw") || contentEl.innerText || "")) {
+        sources = [];
+      }
       onSources(sources);
       var score = groundingScore(sources);
       if (score !== null) {
@@ -2469,6 +2472,10 @@
     if (!dists.length) return null;
     var avg = dists.reduce(function(a, b) { return a + b; }, 0) / dists.length;
     return Math.round(100 - avg * 100);
+  }
+
+  function answerUsesSources(text) {
+    return !/(provided context|context|sources?)\s+(does not|doesn't|do not|don't)\s+contain|not enough information|insufficient information|cannot provide an answer|cannot answer|can't answer|no information (about|on|regarding)/i.test(text || "");
   }
 
   // ===== APPEND MESSAGES =====
@@ -2525,6 +2532,9 @@
   }
 
   function appendBotMsg(text, sources) {
+    if (!answerUsesSources(text)) {
+      sources = [];
+    }
     var container = document.getElementById("messages");
     var row = document.createElement("div");
     row.className = "msg-row bot";
@@ -2578,9 +2588,11 @@
     exportBtn.textContent = "Export MD";
     exportBtn.onclick = function() {
       var raw = contentEl.getAttribute("data-raw") || contentEl.innerText || "";
-      var md = raw + "\n\n---\n\n## Sources\n";
-      if (sources) {
-        sources.forEach(function(s) {
+      var usableSources = answerUsesSources(raw) ? (sources || []) : [];
+      var md = raw;
+      if (usableSources.length) {
+        md += "\n\n---\n\n## Sources\n";
+        usableSources.forEach(function(s) {
           md += "- " + (s.source || s.filename || "Unknown") + " · p." + (s.page || "?") + "\n";
         });
       }

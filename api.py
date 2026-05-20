@@ -50,6 +50,28 @@ app.add_middleware(
 
 _session_upload_status: dict[tuple[str, str], dict] = {}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+_seeded_overview_tenants: set[str] = set()
+
+
+def _ensure_app_overview_memory(tenant_id: str | None) -> None:
+    """Seed the non-confidential Fetch AI overview into a tenant's vector store."""
+    if not tenant_id or tenant_id in _seeded_overview_tenants:
+        return
+    try:
+        from rag_assistant.vector_store import seed_app_overview
+        collection = seed_app_overview(tenant_id=tenant_id)
+        _seeded_overview_tenants.add(tenant_id)
+        logger.info("Seeded Fetch AI app overview memory in '%s' (%d chunks).",
+                    get_collection_name(tenant_id), collection.count())
+    except Exception as exc:
+        logger.warning("Could not seed app overview memory for tenant %s: %s", tenant_id, exc)
+
+
+def _ensure_app_overview_for_all_tenants() -> None:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id FROM tenants").fetchall()
+    for row in rows:
+        _ensure_app_overview_memory(row["id"])
 
 # ---------------------------------------------------------------------------
 # Startup
@@ -161,15 +183,7 @@ def _startup() -> None:
     except Exception as exc:
         logger.warning("Could not check vector store at startup: %s", exc)
 
-    try:
-        from rag_assistant.vector_store import seed_app_overview
-        default = get_tenant_by_slug("default")
-        tid = default['id'] if default else "default"
-        collection = seed_app_overview(tenant_id=tid)
-        logger.info("Seeded Fetch AI app overview memory in '%s' (%d chunks).",
-                    get_collection_name(tid), collection.count())
-    except Exception as exc:
-        logger.warning("Could not seed app overview memory: %s", exc)
+    _ensure_app_overview_for_all_tenants()
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +382,7 @@ def auth_register(request: RegisterRequest):
         except ValueError:
             tenant = create_tenant(org_name, slug=f"{base}-{suffix}-workspace")
         update_tenant_user_tenant(user["id"], tenant["id"], role="admin")
+        _ensure_app_overview_memory(tenant["id"])
         user = get_user_by_id(user["id"]) or user
 
         token = create_token(
@@ -909,6 +924,7 @@ def query(request: QueryRequest, http_req: Request, user: dict = Depends(_requir
     history: list[dict] = []
     if active_chat_id:
         history = get_messages(active_chat_id)
+    _ensure_app_overview_memory(tid)
 
     try:
         result = answer_question(
@@ -991,6 +1007,7 @@ async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth
         active_chat_id = chat["id"]
 
     session_id = active_chat_id if active_chat_id else "global"
+    _ensure_app_overview_memory(tid)
 
     history: list[dict] = []
     if active_chat_id:

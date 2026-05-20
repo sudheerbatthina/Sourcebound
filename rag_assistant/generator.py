@@ -16,7 +16,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "You are a helpful assistant that answers questions about healthcare policy documents. "
+    "You are Fetch AI, a helpful assistant that answers questions about uploaded documents and the Fetch AI app. "
     "Answer ONLY using the information in the provided context. "
     "If the context does not contain enough information to answer the question, say so explicitly. "
     "Always cite the source document name and page number(s) you used in your answer."
@@ -91,6 +91,14 @@ _DETAILED_RE = re.compile(
     r"\b(detailed|detail|thorough|comprehensive|deep dive|explain fully|more context)\b",
     re.IGNORECASE,
 )
+_NO_SOURCE_ANSWER_RE = re.compile(
+    r"(provided context|context|sources?)\s+"
+    r"(does not|doesn't|do not|don't)\s+contain|"
+    r"not enough information|insufficient information|"
+    r"cannot provide an answer|cannot answer|can't answer|"
+    r"no information (?:about|on|regarding)",
+    re.IGNORECASE,
+)
 
 
 def resolve_answer_style(question: str, requested_style: str = "detailed") -> str:
@@ -104,6 +112,24 @@ def resolve_answer_style(question: str, requested_style: str = "detailed") -> st
     if _DETAILED_RE.search(question):
         return "detailed"
     return requested_style
+
+
+def answer_uses_sources(answer: str) -> bool:
+    """Return False when the model explicitly says the context cannot answer."""
+    return not _NO_SOURCE_ANSWER_RE.search(answer or "")
+
+
+def build_sources(hits: list[dict], answer: str) -> list[dict]:
+    if not answer_uses_sources(answer):
+        return []
+    return [
+        {
+            "source": h["metadata"]["source"],
+            "page": h["metadata"]["page_number"],
+            "chunk_id": h["chunk_id"],
+        }
+        for h in hits
+    ]
 
 
 def _build_messages(
@@ -186,14 +212,7 @@ def answer_question(
     result = {
         "question": question,
         "answer": response.choices[0].message.content,
-        "sources": [
-            {
-                "source": h["metadata"]["source"],
-                "page": h["metadata"]["page_number"],
-                "chunk_id": h["chunk_id"],
-            }
-            for h in hits
-        ],
+        "sources": build_sources(hits, response.choices[0].message.content),
         "from_cache": False,
         "answer_style": effective_style,
         "tenant_id": tenant_id,
@@ -263,14 +282,7 @@ def stream_answer(
             yield f"data: {json.dumps({'type': 'answer_chunk', 'content': delta})}\n\n"
 
     # 5. Send sources
-    sources = [
-        {
-            "source": h["metadata"]["source"],
-            "page": h["metadata"]["page_number"],
-            "chunk_id": h["chunk_id"],
-        }
-        for h in hits
-    ]
+    sources = build_sources(hits, full_answer)
     yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
 
     # 6. Faithfulness score (LLM-evaluated)
