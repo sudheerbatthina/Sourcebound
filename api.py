@@ -161,6 +161,16 @@ def _startup() -> None:
     except Exception as exc:
         logger.warning("Could not check vector store at startup: %s", exc)
 
+    try:
+        from rag_assistant.vector_store import seed_app_overview
+        default = get_tenant_by_slug("default")
+        tid = default['id'] if default else "default"
+        collection = seed_app_overview(tenant_id=tid)
+        logger.info("Seeded Fetch AI app overview memory in '%s' (%d chunks).",
+                    get_collection_name(tid), collection.count())
+    except Exception as exc:
+        logger.warning("Could not seed app overview memory: %s", exc)
+
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -342,7 +352,6 @@ def auth_register(request: RegisterRequest):
     suffix = str(random.randint(1000, 9999))
     username = f"{base}{suffix}"
     try:
-        # Register without tenant — onboarding step 2 assigns tenant
         user = create_user(
             username=username,
             password=request.password,
@@ -351,10 +360,19 @@ def auth_register(request: RegisterRequest):
             role="member",
             tenant_id=None,
         )
-        # No tenant_id yet — frontend will show org creation step
+
+        org_base = (request.display_name or base or "My").strip()
+        org_name = f"{org_base}'s Workspace"
+        try:
+            tenant = create_tenant(org_name)
+        except ValueError:
+            tenant = create_tenant(org_name, slug=f"{base}-{suffix}-workspace")
+        update_tenant_user_tenant(user["id"], tenant["id"], role="admin")
+        user = get_user_by_id(user["id"]) or user
+
         token = create_token(
             user["id"], user["username"], user["role"],
-            tenant_id="", display_name=request.display_name
+            tenant_id=tenant["id"], display_name=request.display_name
         )
         return {
             "token": token,
@@ -362,7 +380,8 @@ def auth_register(request: RegisterRequest):
             "username": user["username"],
             "display_name": user["display_name"],
             "role": user["role"],
-            "tenant_id": None,
+            "tenant_id": tenant["id"],
+            "tenant_name": tenant["name"],
         }
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -887,6 +906,9 @@ def query(request: QueryRequest, http_req: Request, user: dict = Depends(_requir
         active_chat_id = chat["id"]
 
     session_id = active_chat_id if active_chat_id else "global"
+    history: list[dict] = []
+    if active_chat_id:
+        history = get_messages(active_chat_id)
 
     try:
         result = answer_question(
@@ -895,6 +917,7 @@ def query(request: QueryRequest, http_req: Request, user: dict = Depends(_requir
             use_cache=request.use_cache,
             user_group=request.user_group,
             session_id=session_id,
+            history=history,
             answer_style=request.answer_style,
             tenant_id=tid,
         )
@@ -985,6 +1008,7 @@ async def query_stream(request: QueryRequest, user: dict = Depends(_require_auth
             mode=request.mode,
             answer_style=request.answer_style,
             tenant_id=tid,
+            use_cache=request.use_cache,
         ):
             try:
                 raw = chunk.removeprefix("data: ").strip()

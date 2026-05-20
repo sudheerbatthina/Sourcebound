@@ -309,6 +309,9 @@
       <input type="text" id="org-name" placeholder="Acme Corp" autocomplete="organization" />
     </div>
     <button class="submit-btn" id="create-org-btn" onclick="doCreateOrg()">Create Workspace</button>
+    <button class="submit-btn" id="skip-org-btn" onclick="skipWorkspaceSetup()" style="background:#27272a;border:1px solid #3f3f46;margin-top:10px;">
+      Skip for now
+    </button>
 
     <div class="divider">
       <div class="divider-line"></div>
@@ -515,8 +518,11 @@
       }
       localStorage.setItem("crag_token", data.token);
       _storeUser(data, { email: email });
-      // Always show onboarding after registration
-      showOnboarding();
+      if (data.tenant_id) {
+        window.location.replace("/");
+      } else {
+        showOnboarding();
+      }
     } catch(e) {
       showError("register-error", "Network error. Please try again.");
     } finally {
@@ -566,6 +572,13 @@
       btn.disabled = false;
       btn.textContent = "Create Workspace";
     }
+  }
+
+  async function skipWorkspaceSetup() {
+    var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+    var fallbackName = (user.display_name || user.username || "My").split("@")[0] + "'s Workspace";
+    document.getElementById("org-name").value = fallbackName;
+    await doCreateOrg();
   }
 
   async function doAcceptInvite() {

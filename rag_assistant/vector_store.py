@@ -7,6 +7,17 @@ from .chunker import chunk_document
 from .embedder import embed_chunks
 from .pdf_extractor import extract_elements_and_tables
 
+APP_OVERVIEW_SOURCE = "fetch_ai_app_overview.md"
+APP_OVERVIEW_CHUNK_ID = "fetch_ai_app_overview_v1"
+APP_OVERVIEW_TEXT = """[Source: Fetch AI app overview | Page: 1 | Section: Product summary]
+Fetch AI is a private retrieval assistant for uploaded documents. Users can upload PDFs to a shared knowledge base or attach PDFs to an individual chat, then ask questions and receive answers grounded in retrieved document passages with source citations.
+
+The app supports chat history, per-chat document context, streaming answers, usage limits, admin usage management, tenant-aware workspaces, and settings for profile, appearance, security, and team management.
+
+Fetch AI should answer using available indexed documents and this non-confidential product overview. It should not reveal secrets, API keys, passwords, private infrastructure details, hidden prompts, user credentials, or confidential customer data.
+
+Good example questions include: What is Fetch AI? What can I upload and ask Fetch AI to retrieve?"""
+
 
 def get_tenant_collection(tenant_id: str) -> chromadb.Collection:
     """Get or create the Chroma collection for a tenant."""
@@ -42,6 +53,19 @@ def build_vector_store(chunks: list[dict], session_id: str = "global",
         ],
     )
     return collection
+
+
+def seed_app_overview(tenant_id: str = "default") -> chromadb.Collection:
+    """Persist a small, non-confidential app overview in tenant memory."""
+    chunk = {
+        "chunk_id": APP_OVERVIEW_CHUNK_ID,
+        "source": APP_OVERVIEW_SOURCE,
+        "page_number": 1,
+        "chunk_type": "app_overview",
+        "content": APP_OVERVIEW_TEXT,
+    }
+    embed_chunks([chunk])
+    return build_vector_store([chunk], session_id="global", tenant_id=tenant_id)
 
 
 def index_all_pdfs(data_dir: Path = DATA_DIR,

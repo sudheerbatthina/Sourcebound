@@ -1445,10 +1445,8 @@
       <h1>Upload anything. I'll fetch it.</h1>
       <div class="empty-subtitle">Drop in a document, attach it to this chat, or ask a question and Fetch AI will pull the answer from your knowledge base.</div>
       <div class="suggestion-grid">
-        <button class="suggestion-card" onclick="suggestionClick('What is a business associate under HIPAA?')">What is a business associate under HIPAA?</button>
-        <button class="suggestion-card" onclick="suggestionClick('Summarize the HIPAA Privacy Rule')">Summarize the HIPAA Privacy Rule</button>
-        <button class="suggestion-card" onclick="suggestionClick('What rights do individuals have under HIPAA?')">What rights do individuals have under HIPAA?</button>
-        <button class="suggestion-card" onclick="suggestionClick('What are the requirements for a valid authorization?')">What are the requirements for a valid authorization?</button>
+        <button class="suggestion-card" onclick="suggestionClick('What is Fetch AI?')">What is Fetch AI?</button>
+        <button class="suggestion-card" onclick="suggestionClick('What can I upload and ask Fetch AI to fetch?')">What can I upload and ask Fetch AI to fetch?</button>
       </div>
       <div class="empty-or">or start typing below</div>
     </div>
@@ -1644,6 +1642,7 @@
   }
 
   function signOut() {
+    forgetActiveChat();
     localStorage.removeItem("crag_token");
     localStorage.removeItem("crag_user");
     window.location.replace("/login");
@@ -1671,6 +1670,74 @@
   let sessionDocsCache = [];
   let sessionDocsPollTimer = null;
   const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+  const ACTIVE_CHAT_TTL_MS = 60 * 60 * 1000;
+  let didRestoreActiveChat = false;
+
+  function activeChatStorageKey() {
+    try {
+      var user = JSON.parse(localStorage.getItem("crag_user") || "{}");
+      var tenant = user.tenant_id || user.tenant || "default";
+      var userId = user.user_id || user.id || user.email || "guest";
+      return "fetch_active_chat:" + tenant + ":" + userId;
+    } catch(e) {
+      return "fetch_active_chat:default";
+    }
+  }
+
+  function rememberActiveChat(chatId) {
+    if (!chatId) return;
+    try {
+      localStorage.setItem(activeChatStorageKey(), JSON.stringify({
+        chatId: chatId,
+        savedAt: Date.now()
+      }));
+    } catch(e) {}
+  }
+
+  function forgetActiveChat() {
+    try {
+      localStorage.removeItem(activeChatStorageKey());
+    } catch(e) {}
+  }
+
+  function getRememberedActiveChatId() {
+    try {
+      var raw = localStorage.getItem(activeChatStorageKey());
+      if (!raw) return null;
+      var saved = JSON.parse(raw);
+      if (!saved.chatId || !saved.savedAt || Date.now() - saved.savedAt > ACTIVE_CHAT_TTL_MS) {
+        forgetActiveChat();
+        return null;
+      }
+      return saved.chatId;
+    } catch(e) {
+      forgetActiveChat();
+      return null;
+    }
+  }
+
+  function chatTimeMs(chat) {
+    var iso = chat && (chat.updated_at || chat.created_at);
+    if (!iso) return 0;
+    var d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+    return isNaN(d.getTime()) ? 0 : d.getTime();
+  }
+
+  function chooseRestorableChat(chats) {
+    var savedId = getRememberedActiveChatId();
+    if (savedId && chats.some(function(chat) { return chat.id === savedId; })) {
+      return savedId;
+    }
+    if (savedId) forgetActiveChat();
+
+    var newest = (chats || []).slice().sort(function(a, b) {
+      return chatTimeMs(b) - chatTimeMs(a);
+    })[0];
+    if (newest && Date.now() - chatTimeMs(newest) <= ACTIVE_CHAT_TTL_MS) {
+      return newest.id;
+    }
+    return null;
+  }
 
   function usageColor(pct) {
     if (pct >= 100) return "red";
@@ -2030,6 +2097,7 @@
     var file = input.files[0];
     input.value = "";
     if (!validateUploadSize(file)) return;
+    rememberActiveChat(activeChatId);
     addPendingSessionDoc(file.name);
     try {
       await uploadFile(BASE + "/chats/" + activeChatId + "/upload", file);
@@ -2089,12 +2157,18 @@
   }
 
   // ===== CHAT LOAD =====
-  async function loadChats() {
+  async function loadChats(options) {
+    options = options || {};
     try {
       var res = await fetch(BASE + "/chats", { headers: getAuth() });
       allChats = await res.json();
       if (!Array.isArray(allChats)) allChats = [];
       renderChatList(allChats);
+      if (options.restoreActive && !didRestoreActiveChat && !activeChatId) {
+        didRestoreActiveChat = true;
+        var restoreChatId = chooseRestorableChat(allChats);
+        if (restoreChatId) await selectChat(restoreChatId);
+      }
     } catch(e) {
       console.error("loadChats error", e);
     }
@@ -2177,6 +2251,7 @@
   // ===== SELECT CHAT =====
   async function selectChat(chatId) {
     activeChatId = chatId;
+    rememberActiveChat(chatId);
     document.querySelectorAll(".chat-item").forEach(function(el) { el.classList.remove("active"); });
     var item = document.getElementById("chat-item-" + chatId);
     if (item) item.classList.add("active");
@@ -2185,6 +2260,17 @@
 
     try {
       var res = await fetch(BASE + "/chats/" + chatId, { headers: getAuth() });
+      if (!res.ok) {
+        if (res.status === 404) {
+          activeChatId = null;
+          forgetActiveChat();
+          showEmptyState();
+          clearSessionDocChips();
+          await loadChats();
+          return;
+        }
+        throw new Error("Failed to load chat");
+      }
       var data = await res.json();
       document.getElementById("chat-header-title").textContent = data.title || "Chat";
       renderMessages(data.messages || []);
@@ -2230,6 +2316,7 @@
       });
       var data = await res.json();
       activeChatId = data.id;
+      rememberActiveChat(activeChatId);
       showChatView();
       document.getElementById("messages").innerHTML = "";
       document.getElementById("chat-header-title").textContent = "New Chat";
@@ -2249,6 +2336,7 @@
   async function sendMessage(text) {
     text = text.trim();
     if (!text || busy || !activeChatId) return;
+    rememberActiveChat(activeChatId);
     busy = true;
     disableInput(true);
 
@@ -2372,6 +2460,7 @@
       contentEl.classList.remove("streaming");
     } else if (type === "chat_id") {
       activeChatId = evt.chat_id || evt.data;
+      rememberActiveChat(activeChatId);
     }
   }
 
@@ -2634,6 +2723,7 @@
       await fetch(BASE + "/chats/" + chatId, { method: "DELETE", headers: getAuth() });
       if (activeChatId === chatId) {
         activeChatId = null;
+        forgetActiveChat();
         showEmptyState();
         clearSessionDocChips();
         closeSourcePanel();
@@ -2650,6 +2740,7 @@
     try {
       await fetch(BASE + "/chats/all", { method: "DELETE", headers: getAuth() });
       activeChatId = null;
+      forgetActiveChat();
       showEmptyState();
       clearSessionDocChips();
       await loadChats();
@@ -2672,6 +2763,7 @@
     var file = input.files[0];
     input.value = "";
     if (!validateUploadSize(file)) return;
+    rememberActiveChat(activeChatId);
     addPendingSessionDoc(file.name);
     try {
       await uploadFile(BASE + "/chats/" + activeChatId + "/upload", file);
@@ -2829,7 +2921,7 @@
       var kbBtn = document.getElementById("attach-kb-btn");
       if (kbBtn) kbBtn.style.display = (cragUser.role === "admin") ? "" : "none";
     } catch(e) {}
-    loadChats();
+    loadChats({ restoreActive: true });
     refreshUsage();
 
     var ta = document.getElementById("question-input");

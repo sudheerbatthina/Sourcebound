@@ -1,6 +1,7 @@
 import json
 import time
 import logging
+import re
 from typing import Generator
 
 from dotenv import load_dotenv
@@ -77,6 +78,33 @@ _STYLE_INSTRUCTIONS = {
     "detailed": "Answer thoroughly with full explanation.",
 }
 
+_CONCISE_RE = re.compile(
+    r"\b("
+    r"brief|briefly|short|shorter|summarize|summary|sum up|tldr|tl;dr|"
+    r"concise|quick|simple|simplify|in\s+\d+\s+(?:sentences?|lines?|words?)|"
+    r"one\s+(?:sentence|paragraph)|few\s+(?:sentences|lines|words)"
+    r")\b",
+    re.IGNORECASE,
+)
+_BULLETS_RE = re.compile(r"\b(bullets?|bullet points?|list|checklist)\b", re.IGNORECASE)
+_DETAILED_RE = re.compile(
+    r"\b(detailed|detail|thorough|comprehensive|deep dive|explain fully|more context)\b",
+    re.IGNORECASE,
+)
+
+
+def resolve_answer_style(question: str, requested_style: str = "detailed") -> str:
+    """Infer answer style from the user's latest wording, overriding UI defaults."""
+    question = question or ""
+    requested_style = requested_style if requested_style in _STYLE_INSTRUCTIONS else "detailed"
+    if _BULLETS_RE.search(question):
+        return "bullets"
+    if _CONCISE_RE.search(question):
+        return "concise"
+    if _DETAILED_RE.search(question):
+        return "detailed"
+    return requested_style
+
 
 def _build_messages(
     context: str,
@@ -94,7 +122,9 @@ def _build_messages(
     msgs.append({"role": "user", "content": (
         f"Context:\n{context}\n\n"
         f"Question: {question}\n\n"
-        f"Format: {style_instruction}"
+        f"Format: {style_instruction}\n"
+        "If the user's latest message asks for a shorter, simpler, summarized, or reformatted "
+        "version of the previous answer, follow that instruction even when prior answers were long."
     )})
     return msgs
 
@@ -122,8 +152,14 @@ def answer_question(
     Returned dict keys:
         question, answer, sources, from_cache, latency_s, token_count
     """
+    effective_style = resolve_answer_style(question, answer_style)
     if use_cache:
-        cached = get_semantic_cache(question)
+        cached = get_semantic_cache(
+            question,
+            answer_style=effective_style,
+            tenant_id=tenant_id,
+            session_id=session_id,
+        )
         if cached:
             logger.info("Semantic cache hit for question")
             cached["from_cache"] = True
@@ -142,7 +178,7 @@ def answer_question(
     t0 = time.time()
     response = client.chat.completions.create(
         model=CHAT_MODEL,
-        messages=_build_messages(context, question, history, answer_style=answer_style),
+        messages=_build_messages(context, question, history, answer_style=effective_style),
         temperature=0,
     )
     latency_s = round(time.time() - t0, 3)
@@ -159,6 +195,9 @@ def answer_question(
             for h in hits
         ],
         "from_cache": False,
+        "answer_style": effective_style,
+        "tenant_id": tenant_id,
+        "session_id": session_id,
         "latency_s": latency_s,
         "token_count": response.usage.total_tokens if response.usage else None,
     }
@@ -178,11 +217,19 @@ def stream_answer(
     mode: str = "chat",
     answer_style: str = "detailed",
     tenant_id: str = "default",
+    use_cache: bool = True,
 ) -> Generator[str, None, None]:
     """Yield SSE-formatted chunks for streaming responses."""
 
+    effective_style = resolve_answer_style(question, answer_style)
+
     # 1. Semantic cache check — yield full answer as single chunk and return
-    cached = get_semantic_cache(question)
+    cached = get_semantic_cache(
+        question,
+        answer_style=effective_style,
+        tenant_id=tenant_id,
+        session_id=session_id,
+    ) if use_cache else None
     if cached:
         yield f"data: {json.dumps({'type': 'answer_chunk', 'content': cached['answer']})}\n\n"
         yield f"data: {json.dumps({'type': 'sources', 'sources': cached['sources']})}\n\n"
@@ -205,7 +252,7 @@ def stream_answer(
     full_answer = ""
     stream = client.chat.completions.create(
         model=CHAT_MODEL,
-        messages=_build_messages(context, question, history, system_prompt=system_prompt, answer_style=answer_style),
+        messages=_build_messages(context, question, history, system_prompt=system_prompt, answer_style=effective_style),
         temperature=0,
         stream=True,
     )
@@ -232,9 +279,13 @@ def stream_answer(
     yield f"data: {json.dumps({'type': 'done', 'from_cache': False, 'faithfulness': faithfulness})}\n\n"
 
     # 7. Save to semantic cache
-    save_semantic_cache(question, {
-        "question": question,
-        "answer": full_answer,
-        "sources": sources,
-        "from_cache": False,
-    })
+    if use_cache:
+        save_semantic_cache(question, {
+            "question": question,
+            "answer": full_answer,
+            "sources": sources,
+            "from_cache": False,
+            "answer_style": effective_style,
+            "tenant_id": tenant_id,
+            "session_id": session_id,
+        })
