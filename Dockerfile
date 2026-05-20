@@ -38,6 +38,7 @@ COPY --from=deps /deps /usr/local
 COPY rag_assistant/ ./rag_assistant/
 COPY api.py .
 COPY frontend/ ./frontend/
+COPY data/fetch_ai_overview.md /app/data/fetch_ai_overview.md
 
 RUN mkdir -p /app/storage/data /app/storage/chroma_db /app/.cache
 
