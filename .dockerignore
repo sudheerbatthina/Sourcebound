@@ -33,7 +33,7 @@ mlruns/
 scripts/
 README.md
 *.md
-!data/fetch_ai_overview.md
+!data/sourcebound_overview.md
 
 # Large data files — mount as volumes instead
 data/*.pdf

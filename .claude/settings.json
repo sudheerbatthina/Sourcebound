@@ -58,7 +58,8 @@
       "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/health\" --verbose 2>&1)",
       "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" --verbose 2>&1)",
       "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" -X POST -H \"Content-Type: application/json\" -d \"{}\" --verbose 2>&1)",
-      "Read(//c/Users/sudhe/AppData/Roaming/Claude/**)"
+      "Read(//c/Users/sudhe/AppData/Roaming/Claude/**)",
+      "Bash(powershell -Command ' *)"
     ]
   }
 }

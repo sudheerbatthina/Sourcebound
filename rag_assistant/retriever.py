@@ -29,14 +29,14 @@ def _reranking_enabled() -> bool:
 
 
 _APP_QUESTION_RE = re.compile(
-    r"\b(fetch\s*ai|sourcebound|this\s+app|what\s+is\s+this|what\s+can\s+(i|you|we)\s+upload|"
+    r"\b(sourcebound|this\s+app|what\s+is\s+this|what\s+can\s+(i|you|we)\s+upload|"
     r"how\s+does\s+this\s+work|what\s+can\s+you\s+do|what\s+do\s+you\s+do|"
     r"tell\s+me\s+about\s+(this\s+)?app|about\s+you|who\s+are\s+you|"
     r"what\s+are\s+you|your\s+features?|what\s+is\s+fetch)\b",
     re.IGNORECASE,
 )
 
-APP_OVERVIEW_SOURCE = "fetch_ai_overview.md"
+APP_OVERVIEW_SOURCE = "sourcebound_overview.md"
 
 
 def is_app_question(query: str) -> bool:

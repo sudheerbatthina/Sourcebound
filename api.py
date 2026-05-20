@@ -1,4 +1,4 @@
-"""FastAPI service for the Fetch AI RAG Assistant."""
+"""FastAPI service for the Sourcebound RAG Assistant."""
 
 import json
 import logging
@@ -42,7 +42,7 @@ from rag_assistant.auth import verify_password, hash_password, create_token, dec
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Fetch AI")
+app = FastAPI(title="Sourcebound")
 app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET", "fallback-dev-secret-only"),
@@ -54,14 +54,14 @@ _seeded_overview_tenants: set[str] = set()
 
 
 def _ensure_app_overview_memory(tenant_id: str | None) -> None:
-    """Seed the non-confidential Fetch AI overview into a tenant's vector store."""
+    """Seed the non-confidential Sourcebound overview into a tenant's vector store."""
     if not tenant_id or tenant_id in _seeded_overview_tenants:
         return
     try:
         from rag_assistant.vector_store import seed_app_overview
         collection = seed_app_overview(tenant_id=tenant_id)
         _seeded_overview_tenants.add(tenant_id)
-        logger.info("Seeded Fetch AI app overview memory in '%s' (%d chunks).",
+        logger.info("Seeded Sourcebound app overview memory in '%s' (%d chunks).",
                     get_collection_name(tenant_id), collection.count())
     except Exception as exc:
         logger.warning("Could not seed app overview memory for tenant %s: %s", tenant_id, exc)

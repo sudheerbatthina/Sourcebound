@@ -15,7 +15,7 @@ CACHE_DIR = Path(".cache")
 
 # Collection
 COLLECTION_NAME = "rag_chunks"
-COLLECTION_PREFIX = os.environ.get("COLLECTION_PREFIX", "fetch_ai")
+COLLECTION_PREFIX = os.environ.get("COLLECTION_PREFIX", "sourcebound")
 
 
 def get_collection_name(tenant_id: str) -> str:
@@ -48,7 +48,7 @@ MLFLOW_TRACKING_URI = "mlruns"
 
 # Redis (optional — falls back to file cache when unavailable)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-ANSWER_CACHE_TTL = 86400  # 24 hours in seconds; embeddings have no TTL
+ANSWER_CACHE_TTL = 18000  # 5 hours in seconds; embeddings have no TTL
 
 # API authentication (comma-separated keys in .env, e.g. "key1,key2")
 _raw_keys = os.getenv("API_KEYS", "dev-key-123")
