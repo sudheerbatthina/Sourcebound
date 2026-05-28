@@ -51,6 +51,7 @@ app.add_middleware(
 _session_upload_status: dict[tuple[str, str], dict] = {}
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 _seeded_overview_tenants: set[str] = set()
+_seeded_md_tenants: set[str] = set()
 
 
 def _ensure_app_overview_memory(tenant_id: str | None) -> None:
@@ -67,11 +68,27 @@ def _ensure_app_overview_memory(tenant_id: str | None) -> None:
         logger.warning("Could not seed app overview memory for tenant %s: %s", tenant_id, exc)
 
 
+def _ensure_md_docs_seeded(tenant_id: str | None) -> None:
+    """Seed all .md files from the seed data directory (except app overview) into a tenant's vector store."""
+    if not tenant_id or tenant_id in _seeded_md_tenants:
+        return
+    try:
+        from rag_assistant.vector_store import seed_all_md_files
+        result = seed_all_md_files(tenant_id=tenant_id)
+        _seeded_md_tenants.add(tenant_id)
+        if result is not None:
+            logger.info("Seeded markdown knowledge docs in '%s' (%d chunks).",
+                        get_collection_name(tenant_id), result.count())
+    except Exception as exc:
+        logger.warning("Could not seed markdown docs for tenant %s: %s", tenant_id, exc)
+
+
 def _ensure_app_overview_for_all_tenants() -> None:
     with get_conn() as conn:
         rows = conn.execute("SELECT id FROM tenants").fetchall()
     for row in rows:
         _ensure_app_overview_memory(row["id"])
+        _ensure_md_docs_seeded(row["id"])
 
 # ---------------------------------------------------------------------------
 # Startup

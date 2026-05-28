@@ -1369,7 +1369,7 @@
     }
   </style>
 </head>
-<body data-theme="light">
+<body data-theme="dark">
 <div id="app">
 
   <!-- SIDEBAR -->
@@ -1378,7 +1378,7 @@
       <span class="sidebar-wordmark" id="sidebar-brand-text">Sourcebound</span>
     </div>
 
-    <button class="new-chat-btn" onclick="createNewChat()">
+    <button class="new-chat-btn" onclick="startNewChat()">
       <span style="font-size:16px;font-weight:300;">&#65291;</span> New Chat
     </button>
 
@@ -1460,8 +1460,8 @@
       <h1>Upload anything. I'll fetch it.</h1>
       <div class="empty-subtitle">Drop in a document, attach it to this chat, or ask a question and Sourcebound will pull the answer from your knowledge base.</div>
       <div class="suggestion-grid">
-        <button class="suggestion-card" onclick="suggestionClick('What is Sourcebound?')">What is Sourcebound?</button>
-        <button class="suggestion-card" onclick="suggestionClick('What can I upload and ask Sourcebound to fetch?')">What can I upload and ask Sourcebound to fetch?</button>
+        <button class="suggestion-card" onclick="suggestionClick('What is the remote work policy?')">What is the remote work policy?</button>
+        <button class="suggestion-card" onclick="suggestionClick('How does pricing work?')">How does pricing work?</button>
       </div>
       <div class="empty-or">or start typing below</div>
     </div>
@@ -1667,7 +1667,7 @@
     name: "User",
     role: "Member",
     access: "public",
-    theme: "light",
+    theme: "dark",
     defaultMode: "chat",
     topK: 5,
     streaming: true,
@@ -1679,7 +1679,7 @@
   let busy = false;
   let settings = { ...DEFAULT_SETTINGS };
   let allChats = [];
-  let tempThemeSelection = "light";
+  let tempThemeSelection = "dark";
   let tempDefaultMode = "chat";
   let currentUsage = null;
   let sessionDocsCache = [];
@@ -1925,7 +1925,7 @@
     settings.topK = parseInt(document.getElementById("s-topk").value, 10);
     settings.streaming = document.getElementById("s-streaming").checked;
     settings.cache = document.getElementById("s-cache").checked;
-    settings.theme = tempThemeSelection || "light";
+    settings.theme = tempThemeSelection || "dark";
     settings.defaultMode = tempDefaultMode || "chat";
     localStorage.setItem("crag_settings", JSON.stringify(settings));
     applyTheme(settings.theme);
@@ -2361,9 +2361,23 @@
     }
   }
 
-  async function suggestionClick(text) {
-    await createNewChat();
-    sendMessage(text);
+  function suggestionClick(text) {
+    var input = document.getElementById("question-input");
+    input.value = text;
+    autoResizeTextarea();
+    handleSendClick();
+  }
+
+  function startNewChat() {
+    activeChatId = null;
+    forgetActiveChat();
+    showEmptyState();
+    clearSessionDocChips();
+    closeSourcePanel();
+    document.getElementById("messages").innerHTML = "";
+    document.getElementById("chat-header-title").textContent = "";
+    document.querySelectorAll(".chat-item").forEach(function(el) { el.classList.remove("active"); });
+    setTimeout(function() { document.getElementById("question-input").focus(); }, 50);
   }
 
   // ===== SEND MESSAGE =====

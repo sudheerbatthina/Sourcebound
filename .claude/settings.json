@@ -59,7 +59,13 @@
       "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" --verbose 2>&1)",
       "PowerShell(curl.exe -m 5 \"https://clinical-rag-assistant.up.railway.app/mcp\" -X POST -H \"Content-Type: application/json\" -d \"{}\" --verbose 2>&1)",
       "Read(//c/Users/sudhe/AppData/Roaming/Claude/**)",
-      "Bash(powershell -Command ' *)"
+      "Bash(powershell -Command ' *)",
+      "Bash(ls railway*)",
+      "Bash(ls .railway*)",
+      "Bash(which railway *)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\sudhe\\\\projects\\\\Sourcebound\" -Force)",
+      "Bash(Select-Object Name, PSIsContainer)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\sudhe\\\\projects\\\\Sourcebound\" -File | Where-Object {$_.Extension -in '.py', '.html', '.js'} | Select-Object Name | Sort-Object Name)"
     ]
   }
 }

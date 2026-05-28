@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 
 import chromadb
@@ -11,6 +12,7 @@ from .pdf_extractor import extract_elements_and_tables
 APP_OVERVIEW_SOURCE = "sourcebound_overview.md"
 APP_OVERVIEW_CHUNK_ID = "sourcebound_app_overview_v1"
 APP_OVERVIEW_PATH = Path(os.getenv("SOURCEBOUND_OVERVIEW_PATH", str(Path("data") / APP_OVERVIEW_SOURCE)))
+SEED_DATA_DIR = APP_OVERVIEW_PATH.parent
 APP_OVERVIEW_FALLBACK_TEXT = """# Sourcebound Overview
 
 Sourcebound is a private retrieval assistant for uploaded documents. Users can upload PDFs to a shared knowledge base or attach PDFs to a specific chat, then ask questions and receive answers grounded in retrieved passages.
@@ -80,6 +82,48 @@ def seed_app_overview(tenant_id: str = "default") -> chromadb.Collection:
     }
     embed_chunks([chunk])
     return build_vector_store([chunk], session_id="global", tenant_id=tenant_id)
+
+
+def _chunk_md_file(md_path: Path) -> list[dict]:
+    """Split a markdown file into per-section chunks suitable for vector indexing."""
+    text = md_path.read_text(encoding="utf-8").strip()
+    source = md_path.name
+    # Split on lines starting with ## (preserve the heading in each chunk)
+    parts = re.split(r"\n(?=## )", text)
+    chunks = []
+    for i, part in enumerate(parts):
+        part = part.strip()
+        if not part:
+            continue
+        chunk_id = f"{md_path.stem}_s{i}"
+        chunks.append({
+            "chunk_id": chunk_id,
+            "source": source,
+            "page_number": 1,
+            "chunk_type": "text",
+            "content": f"[Source: {source} | Page: 1 | Section: {i + 1}]\n{part}",
+        })
+    return chunks
+
+
+def seed_all_md_files(data_dir: Path = SEED_DATA_DIR,
+                      tenant_id: str = "default") -> chromadb.Collection | None:
+    """Index all .md files in data_dir except the app overview (handled by seed_app_overview)."""
+    md_files = [p for p in sorted(data_dir.glob("*.md")) if p.name != APP_OVERVIEW_SOURCE]
+    if not md_files:
+        return None
+    all_chunks: list[dict] = []
+    for md_path in md_files:
+        chunks = _chunk_md_file(md_path)
+        all_chunks.extend(chunks)
+        print(f"  {md_path.name}: {len(chunks)} chunks")
+    if not all_chunks:
+        return None
+    print(f"Embedding {len(all_chunks)} markdown chunks...")
+    embed_chunks(all_chunks)
+    collection = build_vector_store(all_chunks, session_id="global", tenant_id=tenant_id)
+    print(f"Done. {collection.count()} total chunks in '{get_collection_name(tenant_id)}'")
+    return collection
 
 
 def index_all_pdfs(data_dir: Path = DATA_DIR,
