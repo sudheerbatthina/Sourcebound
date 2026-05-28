@@ -2369,19 +2369,9 @@
     }
   }
 
-  async function suggestionClick(text) {
-    var input = document.getElementById("question-input");
-    input.value = text;
+  function suggestionClick(text) {
+    document.getElementById("question-input").value = text;
     autoResizeTextarea();
-    if (!activeChatId) {
-      console.log("[suggestionClick] no active chat — creating one");
-      await createNewChat();
-      console.log("[suggestionClick] activeChatId after create:", activeChatId);
-    }
-    if (!activeChatId) {
-      console.error("[suggestionClick] chat creation failed, aborting send");
-      return;
-    }
     sendMessage(text);
   }
 
@@ -2400,7 +2390,14 @@
   // ===== SEND MESSAGE =====
   async function sendMessage(text) {
     text = text.trim();
-    if (!text || busy || !activeChatId) return;
+    if (!text || busy) return;
+    if (!activeChatId) {
+      await createNewChat();
+      if (!activeChatId) {
+        console.error("[sendMessage] createNewChat failed — activeChatId still null");
+        return;
+      }
+    }
     rememberActiveChat(activeChatId);
     busy = true;
     disableInput(true);
@@ -2963,14 +2960,6 @@
   function handleSendClick() {
     var text = document.getElementById("question-input").value.trim();
     if (!text || busy) return;
-    if (!activeChatId) {
-      createNewChat().then(function() {
-        console.log("[handleSendClick] activeChatId after create:", activeChatId);
-        if (activeChatId) sendMessage(text);
-        else console.error("[handleSendClick] chat creation failed, message not sent");
-      });
-      return;
-    }
     sendMessage(text);
   }
 
