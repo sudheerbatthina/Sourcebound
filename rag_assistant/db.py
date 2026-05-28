@@ -551,24 +551,31 @@ def get_analytics(tenant_id: str = None) -> dict:
 # Usage limits
 # ---------------------------------------------------------------------------
 
+USAGE_WINDOW_HOURS = 5  # rolling window size
+
 def _current_usage_period() -> tuple[str, str, str]:
+    """Return (period_start, period_end, now) ISO strings for the current 5-hour block.
+
+    Blocks are aligned to Unix epoch so they're stable across restarts:
+    e.g. 00:00, 05:00, 10:00, 15:00, 20:00 UTC each day.
+    """
     now = datetime.utcnow()
-    period_start = now.replace(day=1, hour=0, minute=0,
-                               second=0, microsecond=0).isoformat()
-    next_month = (now.replace(day=28) + timedelta(days=4))
-    period_end = next_month.replace(
-        day=1, hour=0, minute=0, second=0, microsecond=0
-    ).isoformat()
-    return period_start, period_end, now.isoformat()
+    epoch = datetime(1970, 1, 1)
+    total_seconds = int((now - epoch).total_seconds())
+    window_seconds = USAGE_WINDOW_HOURS * 3600
+    block_start_seconds = (total_seconds // window_seconds) * window_seconds
+    period_start = epoch + timedelta(seconds=block_start_seconds)
+    period_end = period_start + timedelta(hours=USAGE_WINDOW_HOURS)
+    return period_start.isoformat(), period_end.isoformat(), now.isoformat()
 
 
 def _limits_for_plan(plan: str) -> dict:
     return {
-        'free': {'uploads': 2, 'queries': 5},
+        'free': {'uploads': 2, 'queries': 10},
         'pro': {'uploads': 50, 'queries': 500},
         'team': {'uploads': 200, 'queries': 2000},
         'enterprise': {'uploads': 999999, 'queries': 999999},
-    }.get(plan, {'uploads': 1, 'queries': 5})
+    }.get(plan, {'uploads': 1, 'queries': 10})
 
 
 def get_or_create_usage(tenant_id: str, user_id: str) -> dict:

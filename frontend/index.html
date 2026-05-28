@@ -1761,15 +1761,25 @@
   }
 
   function formatResetDate(iso) {
-    if (!iso) return "next month";
+    if (!iso) return "soon";
     try {
-      return new Date(iso).toLocaleDateString(undefined, {
-        month: "long",
-        day: "numeric",
-        year: "numeric"
-      });
+      var d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+      return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     } catch(e) {
-      return iso;
+      return "soon";
+    }
+  }
+
+  function hoursUntil(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+      var diffMs = d - Date.now();
+      if (diffMs <= 0) return "less than 1 hour";
+      var h = Math.ceil(diffMs / (1000 * 60 * 60));
+      return h <= 1 ? "less than 1 hour" : h + " hours";
+    } catch(e) {
+      return "";
     }
   }
 
@@ -1806,10 +1816,10 @@
   function showUploadLimitAlert(err) {
     const detail = extractLimitDetail(err);
     const used = detail.uploads_used != null ? detail.uploads_used : detail.uploads_limit;
-    const limit = detail.uploads_limit || 1;
+    const limit = detail.uploads_limit || 2;
     alert("Upload limit reached. You've used your " + used + " upload" +
-      (limit === 1 ? "" : "s") + " for this month. Resets on " +
-      formatResetDate(detail.resets_at) + ". Upgrade to Pro for more.");
+      (limit === 1 ? "" : "s") + " in the last 5 hours. Resets at " +
+      formatResetDate(detail.resets_at) + ".");
   }
 
   function validateUploadSize(file) {
@@ -1821,14 +1831,16 @@
   }
 
   function showQueryLimitCard(contentEl, detail) {
-    const limit = detail.queries_limit || 5;
+    const limit = detail.queries_limit || 10;
+    const until = hoursUntil(detail.resets_at);
+    const resetsAt = formatResetDate(detail.resets_at);
     contentEl.classList.remove("streaming");
     contentEl.setAttribute("data-raw", "");
     contentEl.innerHTML =
       '<div class="limit-card">' +
-        '<div class="limit-card-title">⚡ Monthly limit reached</div>' +
-        '<p>You have used all ' + limit + ' queries this month.<br>Resets on ' +
-          htmlEsc(formatResetDate(detail.resets_at)) + '.</p>' +
+        '<div class="limit-card-title">⚡ Limit reached' + (until ? ' — resets in ' + htmlEsc(until) : '') + '</div>' +
+        '<p>You have used all ' + limit + ' queries in the last 5 hours.<br>Resets at ' +
+          htmlEsc(resetsAt) + '.</p>' +
         '<div class="limit-card-actions">' +
           '<a href="' + htmlEsc(detail.upgrade_url || "/settings#billing") + '">Upgrade Plan →</a>' +
           '<a href="/settings#billing">Learn more</a>' +
