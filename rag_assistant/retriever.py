@@ -120,7 +120,9 @@ def retrieve(
 
     # Restrict to app overview doc when query is about the app itself
     source_where: dict | None = None
-    if is_app_question(query):
+    app_q = is_app_question(query)
+    logger.info("[retrieve] query=%r app_question=%s", query[:120], app_q)
+    if app_q:
         source_where = {"source": {"$eq": APP_OVERVIEW_SOURCE}}
 
     # Combine filters
@@ -156,6 +158,15 @@ def retrieve(
             top_k=top_k * 3,
             session_filter=None if session_id == "global" else session_id,
         )
+        # Apply source filter to BM25 hits so they match the Chroma filter
+        if source_where is not None:
+            allowed_source = source_where.get("source", {}).get("$eq")
+            if allowed_source:
+                before = len(bm25_hits)
+                bm25_hits = [h for h in bm25_hits
+                             if h.get("metadata", {}).get("source") == allowed_source]
+                logger.info("[retrieve] BM25 source filter %r: %d → %d hits",
+                            allowed_source, before, len(bm25_hits))
         ordered_ids = reciprocal_rank_fusion(hits, bm25_hits)
 
         hit_map = {h["chunk_id"]: h for h in hits}
@@ -173,7 +184,11 @@ def retrieve(
                     "metadata": bh["metadata"],
                     "distance": 0.5,
                 })
-        return final_hits[:top_k]
+        result = final_hits[:top_k]
+        logger.info("[retrieve] returning %d hits, sources=%s",
+                    len(result),
+                    list({h["metadata"].get("source", "?") for h in result}))
+        return result
 
     if not use_reranking:
         return hits[:top_k]

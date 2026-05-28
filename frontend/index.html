@@ -692,7 +692,27 @@
       margin: 8px 0;
     }
 
-    .sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .sources { margin-top: 10px; }
+
+    .sources-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      padding: 2px 0;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .sources-toggle:hover { color: var(--accent); }
+    .sources-toggle-arrow { font-size: 9px; transition: transform 0.18s; display: inline-block; }
+    .sources.open .sources-toggle-arrow { transform: rotate(180deg); }
+    .sources-chips { display: none; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+    .sources.open .sources-chips { display: flex; }
     .followups { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .msg-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
@@ -2582,7 +2602,7 @@
     headerEl.className = "bot-header";
     var labelSpan = document.createElement("span");
     labelSpan.className = "bot-label";
-    labelSpan.textContent = "FETCH AI";
+    labelSpan.textContent = "Sourcebound";
     headerEl.appendChild(labelSpan);
     headerEl.appendChild(badgeEl);
 
@@ -2636,7 +2656,7 @@
 
     var headerEl = document.createElement("div");
     headerEl.className = "bot-header";
-    headerEl.innerHTML = '<span class="bot-label">FETCH AI</span>' + badgeHtml;
+    headerEl.innerHTML = '<span class="bot-label">Sourcebound</span>' + badgeHtml;
 
     var contentEl = document.createElement("div");
     contentEl.className = "bot-content";
@@ -2737,7 +2757,21 @@
       grouped[name].push(s);
     });
 
-    Object.keys(grouped).forEach(function(docName) {
+    var docNames = Object.keys(grouped);
+    if (!docNames.length) return;
+
+    // Collapsible "Sources ▼" toggle
+    var toggle = document.createElement("button");
+    toggle.className = "sources-toggle";
+    toggle.innerHTML = 'Sources <span class="sources-toggle-arrow">&#9662;</span>';
+    toggle.onclick = function() { container.classList.toggle("open"); };
+    container.appendChild(toggle);
+
+    // Hidden chips area, revealed on toggle
+    var chipsEl = document.createElement("div");
+    chipsEl.className = "sources-chips";
+
+    docNames.forEach(function(docName) {
       var refs = grouped[docName];
       var chip = document.createElement("div");
       if (refs.length === 1) {
@@ -2760,8 +2794,10 @@
           openSourcePanel(docName, refs.map(function(r) { return r.page; }), allSources);
         };
       }
-      container.appendChild(chip);
+      chipsEl.appendChild(chip);
     });
+
+    container.appendChild(chipsEl);
   }
 
   // ===== FOLLOW-UPS =====
