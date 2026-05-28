@@ -1,6 +1,18 @@
-# Healthcare RAG Assistant
+# Sourcebound
 
-A production-ready Retrieval-Augmented Generation (RAG) system for healthcare policy documents. Extracts, chunks, embeds, and retrieves document content, then generates grounded answers with source citations using OpenAI.
+Sourcebound is an open source, private Retrieval-Augmented Generation (RAG) assistant for document Q&A. It helps teams ask grounded questions over their own documents without sending source material into a public search workflow, with a healthcare policy use case focused on HIPAA-style access controls, citations, and audit-friendly evaluation.
+
+Sourcebound extracts, chunks, embeds, and retrieves document content, then generates answers with source citations using OpenAI.
+
+<!-- Suggested GitHub topics: rag, retrieval-augmented-generation, healthcare-ai, document-qa, fastapi, streamlit, chromadb, openai, mlflow, hipaa -->
+
+---
+
+## Why Sourcebound?
+
+Organizations sit on policies, PDFs, playbooks, and operational documents that are hard to search and risky to expose. Healthcare teams face an even sharper version of that problem: staff need fast answers from trusted documents, but access control, PHI handling, and citation quality matter.
+
+Sourcebound provides a private RAG reference implementation for document Q&A. It combines document ingestion, semantic retrieval, reranking, answer generation, API authentication, group-based access filtering, caching, and evaluation so teams can build useful assistants while keeping sensitive workflows under their own control.
 
 ---
 
@@ -91,6 +103,8 @@ uvicorn api:app --reload
 # Available at http://localhost:8000
 ```
 
+Swagger UI is available at [`/docs`](http://localhost:8000/docs) when the API service is running.
+
 All endpoints except `/health` require an `X-API-Key` header:
 
 ```bash
@@ -100,7 +114,7 @@ curl http://localhost:8000/health
 # Query (authenticated)
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-key-123" \
+  -H "X-API-Key: <YOUR_API_KEY>" \
   -d '{"question": "What is a business associate under HIPAA?", "user_group": "clinical"}'
 ```
 
