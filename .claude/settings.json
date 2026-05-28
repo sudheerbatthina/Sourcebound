@@ -65,7 +65,8 @@
       "Bash(which railway *)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\sudhe\\\\projects\\\\Sourcebound\" -Force)",
       "Bash(Select-Object Name, PSIsContainer)",
-      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\sudhe\\\\projects\\\\Sourcebound\" -File | Where-Object {$_.Extension -in '.py', '.html', '.js'} | Select-Object Name | Sort-Object Name)"
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\sudhe\\\\projects\\\\Sourcebound\" -File | Where-Object {$_.Extension -in '.py', '.html', '.js'} | Select-Object Name | Sort-Object Name)",
+      "Bash(git commit *)"
     ]
   }
 }

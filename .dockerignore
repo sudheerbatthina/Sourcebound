@@ -33,10 +33,9 @@ mlruns/
 scripts/
 README.md
 *.md
-!data/sourcebound_overview.md
 
-# Large data files — mount as volumes instead
-data/*.pdf
+# Data files — written to volume from code constants on first startup
+data/
 
 # Test / eval artefacts
 eval_results.json

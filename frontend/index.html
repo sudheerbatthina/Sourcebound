@@ -1458,10 +1458,10 @@
 
     <div id="empty-state">
       <h1>Upload anything. I'll fetch it.</h1>
-      <div class="empty-subtitle">Drop in a document, attach it to this chat, or ask a question and Sourcebound will pull the answer from your knowledge base.</div>
+      <div class="empty-subtitle">Ask about Sourcebound, explore our sample company handbook, or upload your own document to get started.</div>
       <div class="suggestion-grid">
+        <button class="suggestion-card" onclick="suggestionClick('What is Sourcebound?')">What is Sourcebound?</button>
         <button class="suggestion-card" onclick="suggestionClick('What is the remote work policy?')">What is the remote work policy?</button>
-        <button class="suggestion-card" onclick="suggestionClick('How does pricing work?')">How does pricing work?</button>
       </div>
       <div class="empty-or">or start typing below</div>
     </div>
@@ -2348,7 +2348,15 @@
         headers: getAuthJson(),
         body: JSON.stringify({ title: "New Chat" })
       });
+      if (!res.ok) {
+        console.error("[createNewChat] HTTP", res.status, res.statusText);
+        return;
+      }
       var data = await res.json();
+      if (!data.id) {
+        console.error("[createNewChat] No id in response:", data);
+        return;
+      }
       activeChatId = data.id;
       rememberActiveChat(activeChatId);
       showChatView();
@@ -2357,15 +2365,24 @@
       clearSessionDocChips();
       await loadChats();
     } catch(e) {
-      console.error("createNewChat error", e);
+      console.error("[createNewChat] error:", e);
     }
   }
 
-  function suggestionClick(text) {
+  async function suggestionClick(text) {
     var input = document.getElementById("question-input");
     input.value = text;
     autoResizeTextarea();
-    handleSendClick();
+    if (!activeChatId) {
+      console.log("[suggestionClick] no active chat — creating one");
+      await createNewChat();
+      console.log("[suggestionClick] activeChatId after create:", activeChatId);
+    }
+    if (!activeChatId) {
+      console.error("[suggestionClick] chat creation failed, aborting send");
+      return;
+    }
+    sendMessage(text);
   }
 
   function startNewChat() {
@@ -2947,7 +2964,11 @@
     var text = document.getElementById("question-input").value.trim();
     if (!text || busy) return;
     if (!activeChatId) {
-      createNewChat().then(function() { sendMessage(text); });
+      createNewChat().then(function() {
+        console.log("[handleSendClick] activeChatId after create:", activeChatId);
+        if (activeChatId) sendMessage(text);
+        else console.error("[handleSendClick] chat creation failed, message not sent");
+      });
       return;
     }
     sendMessage(text);

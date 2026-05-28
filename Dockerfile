@@ -17,7 +17,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Layer 3: application code — only layer that rebuilds on code changes
 COPY . .
 
-RUN mkdir -p /app/storage/data /app/storage/chroma_db /app/.cache
+RUN mkdir -p /app/data /app/storage/data /app/storage/chroma_db /app/.cache
 
 EXPOSE 8000
 
