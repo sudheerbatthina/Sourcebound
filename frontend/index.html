@@ -3018,7 +3018,7 @@
     ta.addEventListener("keydown", function(e) {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        handleSendClick();
+        sendMessage(ta.value.trim());
       }
     });
   }
